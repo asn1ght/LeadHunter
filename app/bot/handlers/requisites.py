@@ -8,6 +8,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, Message
 
 from app.audit.extract import inn_is_valid
+from app.audit.runner import MANUAL_INN_TAG
 from app.bot.cards import render_requisites
 from app.bot.handlers.start import USER_TEXT
 from app.bot.keyboards import CardCb, requisites_keyboard, skip_cancel
@@ -97,6 +98,7 @@ async def inn_text(message: Message, state: FSMContext) -> None:
             await message.answer("Лид не найден.")
             return
         company.inn = inn
+        company.tags = sorted({*(company.tags or []), MANUAL_INN_TAG})  # повторный аудит не перезапишет
         await session.commit()
     error = await _load(cid, force=True)
     async with SessionLocal() as session:

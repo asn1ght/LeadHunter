@@ -31,6 +31,10 @@ class YandexSearchError(Exception):
     """Ошибка Search API (HTTP или <error> в XML)."""
 
 
+class YandexNetworkError(YandexSearchError):
+    """Нет связи с Яндексом (таймаут, обрыв, DNS) — временная проблема, а не ответ API."""
+
+
 @dataclass
 class SerpItem:
     url: str
@@ -105,16 +109,42 @@ class YandexSearchClient:
             "responseFormat": "FORMAT_XML",
         }
 
+    async def _request(self, method: str, url: str, **kw: object) -> httpx.Response:
+        """HTTP-запрос; сетевые сбои (таймаут, обрыв, DNS) → YandexSearchError, а не «голое» исключение httpx."""
+        try:
+            return await self._client.request(method, url, **kw)  # type: ignore[arg-type]
+        except httpx.ConnectError:
+            raise  # запрос не ушёл — решает вызывающий (повтор безопасен)
+        except httpx.TimeoutException as exc:
+            raise YandexNetworkError(f"сеть: таймаут ({type(exc).__name__})") from exc
+        except httpx.HTTPError as exc:
+            raise YandexNetworkError(f"сеть: {type(exc).__name__}") from exc
+
     async def _post(self, url: str, body: dict) -> dict:
+        """POST с повторами. Повторяем только то, что точно не списалось: 429, 5xx и ошибку соединения.
+
+        Таймаут чтения не повторяем — запрос мог дойти и быть оплачен.
+        """
+        last = ""
         for attempt in range(3):
-            resp = await self._client.post(url, json=body)
+            try:
+                resp = await self._request("POST", url, json=body)
+            except httpx.ConnectError as exc:
+                last = f"сеть: нет соединения ({type(exc).__name__})"
+                await asyncio.sleep(2 * (attempt + 1))
+                continue
             if resp.status_code == 429 or resp.status_code >= 500:
+                last = f"HTTP {resp.status_code}"
                 await asyncio.sleep(2 * (attempt + 1))
                 continue
             if resp.status_code != 200:
                 raise YandexSearchError(f"HTTP {resp.status_code}: {resp.text[:500]}")
-            return resp.json()
-        raise YandexSearchError(f"HTTP {resp.status_code} after retries")
+            try:
+                return resp.json()
+            except ValueError as exc:
+                raise YandexSearchError("ответ не JSON") from exc
+        error = YandexNetworkError if last.startswith("сеть") else YandexSearchError
+        raise error(f"{last} после 3 попыток")
 
     @staticmethod
     def _decode(raw: str) -> str:
@@ -138,10 +168,16 @@ class YandexSearchClient:
 
     async def get_operation(self, op_id: str, page: int = 0) -> list[SerpItem] | None:
         """Результат отложенного запроса: None — ещё не готов."""
-        resp = await self._client.get(OPERATION_URL.format(id=op_id))
+        try:
+            resp = await self._request("GET", OPERATION_URL.format(id=op_id))
+        except httpx.ConnectError as exc:
+            raise YandexNetworkError(f"сеть: нет соединения ({type(exc).__name__})") from exc
         if resp.status_code != 200:
             raise YandexSearchError(f"operation HTTP {resp.status_code}: {resp.text[:500]}")
-        data = resp.json()
+        try:
+            data = resp.json()
+        except ValueError as exc:
+            raise YandexSearchError("operation: ответ не JSON") from exc
         if not data.get("done"):
             return None
         if "error" in data:

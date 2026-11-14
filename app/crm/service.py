@@ -42,6 +42,19 @@ async def change_status(
     return ev
 
 
+# Статусы, из которых «отправил сообщение» — шаг вперёд. Дальше по воронке (ответил, тест, звонок №2,
+# сделка, отказ) отметка об отправке статус не трогает, иначе лид откатится назад.
+SENDABLE_FROM = frozenset({Status.NEW, Status.CANCELLED, Status.IGNORED, Status.CALL1_NEEDED, Status.CALLBACK})
+
+
+async def mark_sent(session: AsyncSession, company: Company, payload: dict[str, Any] | None = None) -> bool:
+    """Отметить, что сообщение отправлено. Возвращает True, если статус сменился на «Отправлено»."""
+    if Status(company.status) not in SENDABLE_FROM:
+        return False
+    await change_status(session, company, Status.SENT, payload=payload)
+    return True
+
+
 async def add_note(session: AsyncSession, company: Company, text: str) -> Event:
     """Добавить заметку: событие `note` + дописать в `notes` с датой."""
     text = text.strip()

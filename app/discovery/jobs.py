@@ -1,7 +1,9 @@
 """Задачи планировщика: ночной поиск, опрос отложенных запросов, план обзвона на неделю."""
 from __future__ import annotations
 
+import asyncio
 from datetime import datetime, time, timedelta, timezone
+from html import escape
 
 from aiogram import Bot
 from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
@@ -32,37 +34,54 @@ async def notify_admins(bot: Bot, text: str) -> None:
             logger.warning("notify {} failed: {}", admin, exc)
 
 
+# Один поиск за раз: ночной прогон, ручной /run и опрос отложенных запросов не пересекаются
+# (иначе — двойной расход запросов и гонка при записи одних и тех же доменов).
+discovery_lock = asyncio.Lock()
+BUSY = "поиск уже идёт — дождитесь итога"
+
+
 async def discovery_job(bot: Bot, force: bool = False, niche_slug: str | None = None) -> RunStats:
-    """Прогон поиска (по расписанию или из /run)."""
-    try:
-        client = make_search_client()
-    except YandexSearchError as exc:
-        stats = RunStats(stopped_reason=str(exc))
-        return stats
-    try:
-        return await run_discovery(
-            SessionLocal, client, DeepSeekClient(SessionLocal), niche_slug=niche_slug, force=force,
-            notify=lambda t: notify_admins(bot, t),
-        )
-    finally:
-        await client.aclose()
+    """Прогон поиска (по расписанию или из /run). Если другой прогон ещё идёт — не запускается."""
+    if discovery_lock.locked():
+        return RunStats(stopped_reason=BUSY)
+    async with discovery_lock:
+        try:
+            client = make_search_client()
+        except YandexSearchError as exc:
+            return RunStats(stopped_reason=str(exc))
+        try:
+            return await run_discovery(
+                SessionLocal, client, DeepSeekClient(SessionLocal), niche_slug=niche_slug, force=force,
+                notify=lambda t: notify_admins(bot, t),
+            )
+        finally:
+            await client.aclose()
 
 
 async def scheduled_discovery(bot: Bot) -> None:
-    stats = await discovery_job(bot)
+    try:
+        stats = await discovery_job(bot)
+    except Exception as exc:  # noqa: BLE001 — непредвиденный сбой не должен пропадать молча
+        logger.exception("scheduled discovery failed: {}", exc)
+        await notify_admins(bot, f"🌙 Ночной поиск упал: {escape(type(exc).__name__)}: {escape(str(exc)[:300])}\n"
+                                 "Подробности в логе. Можно повторить вручную: /run")
+        return
     if stats.errors or stats.stopped_reason or stats.paused:
         tail = "\nВключить фразы обратно — в /queries." if stats.paused else ""
         await notify_admins(bot, "🌙 Ночной поиск\n" + stats.summary() + tail)
 
 
 async def poll_job(bot: Bot) -> None:
+    if discovery_lock.locked():
+        return  # идёт прогон — заберём на следующем опросе
     try:
         client = make_search_client()
     except YandexSearchError:
         return
     try:
-        stats = await poll_operations(SessionLocal, client, DeepSeekClient(SessionLocal),
-                                      notify=lambda t: notify_admins(bot, t))
+        async with discovery_lock:
+            stats = await poll_operations(SessionLocal, client, DeepSeekClient(SessionLocal),
+                                          notify=lambda t: notify_admins(bot, t))
         if stats.new_companies:
             logger.info("poll: {}", stats.summary().replace("\n", " | "))
     except Exception as exc:  # noqa: BLE001

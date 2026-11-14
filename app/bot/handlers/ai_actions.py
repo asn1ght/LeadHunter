@@ -159,11 +159,21 @@ async def draft_sent(cb: CallbackQuery, callback_data: DraftCb) -> None:
         if not company:
             await cb.answer("Лид не найден")
             return
-        if company.status != Status.SENT.value:
-            await service.change_status(session, company, Status.SENT,
-                                        payload={"via": "ai_draft", "draft_event": ev.id, "channel": ev.payload.get("channel")})
-            await session.commit()
-    await cb.answer("✉️ Отмечено: отправлено")
+        changed = await service.mark_sent(
+            session, company, payload={"via": "ai_draft", "draft_event": ev.id, "channel": ev.payload.get("channel")}
+        )
+        await session.commit()
+        status = company.status
+    name = escape(company.name or company.domain)
+    if changed:
+        await cb.answer("✉️ Отмечено: отправлено")
+        text = f"✉️ {name}: статус {label(Status.SENT)}"
+    elif status == Status.SENT.value:
+        await cb.answer("Уже отмечено")
+        text = f"✉️ {name}: уже {label(Status.SENT)}"
+    else:
+        await cb.answer("Статус не меняю")
+        text = f"ℹ️ {name}: лид уже дальше по воронке ({label(status)}) — статус не меняю"
     if cb.message:
         await cb.message.edit_reply_markup(reply_markup=None)
-        await cb.message.answer(f"✉️ {escape(company.name or company.domain)}: статус {label(Status.SENT)}")
+        await cb.message.answer(text)

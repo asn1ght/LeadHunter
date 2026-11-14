@@ -17,6 +17,7 @@ from app.integrations.checko import auto_enrich
 from app.db.models import Audit, Company, utcnow
 
 _semaphore: asyncio.Semaphore | None = None
+MANUAL_INN_TAG = "inn_manual"  # ИНН введён вручную (кнопка «✏️ Другой ИНН»)
 
 
 def _sem(concurrency: int) -> asyncio.Semaphore:
@@ -168,7 +169,7 @@ async def save_audit(
     )
     if ex.name and not company.name:
         company.name = ex.name[:255]
-    if ex.inn:
+    if ex.inn and MANUAL_INN_TAG not in (company.tags or []):  # ИНН, введённый вручную, сайт не перебивает
         company.inn = ex.inn
     company.phones = list(dict.fromkeys([*(company.phones or []), *ex.phones]))[:5]
     company.emails = list(dict.fromkeys([*(company.emails or []), *ex.emails]))[:5]

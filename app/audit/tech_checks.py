@@ -219,15 +219,24 @@ def run_checks(fetch: FetchResult, now: datetime | None = None, browser: Browser
     if jq and int(jq.split(".")[0]) < 3:
         add(Issue("old_jquery", 1, f"Устаревший jQuery {jq}"))
 
-    # контакты и конверсия
-    hrefs = [(a.attributes.get("href") or "").strip().lower() for a in tree.css("a[href]")]
-    tel = sum(1 for h in hrefs if h.startswith("tel:"))
-    mail = sum(1 for h in hrefs if h.startswith("mailto:"))
-    m["tel_links"], m["mail_links"] = tel, mail
-    if not tel:
-        add(Issue("no_tel_link", 2, "Телефон не кликабельный (нет tel:)"))
+    # контакты и конверсия: главная + внутренние страницы (как и в извлечении контактов для карточки,
+    # иначе карточка показывает WhatsApp, а аудит пишет «нет WhatsApp»)
+    def hrefs_of(t: HTMLParser) -> list[str]:
+        return [(a.attributes.get("href") or "").strip().lower() for a in t.css("a[href]")]
 
-    messengers = detect_messengers(html)
+    hrefs = hrefs_of(tree)
+    extra_hrefs = [h for _, page_html in fetch.extra_pages for h in hrefs_of(HTMLParser(page_html))]
+    tel = sum(1 for h in hrefs if h.startswith("tel:"))
+    tel_extra = sum(1 for h in extra_hrefs if h.startswith("tel:"))
+    mail = sum(1 for h in hrefs + extra_hrefs if h.startswith("mailto:"))
+    m["tel_links"], m["mail_links"] = tel + tel_extra, mail
+    if not tel and not tel_extra:
+        add(Issue("no_tel_link", 2, "Телефон не кликабельный (нет tel:)"))
+    elif not tel:
+        add(Issue("no_tel_link_main", 1, "На главной телефон не кликабельный — только на внутренних страницах"))
+
+    all_html = "\n".join([html, *(page_html for _, page_html in fetch.extra_pages)])
+    messengers = detect_messengers(all_html)
     m["messengers"] = messengers
     if not messengers:
         add(Issue("no_messengers", 1, "Нет WhatsApp / Telegram для связи"))

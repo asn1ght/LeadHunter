@@ -11,7 +11,7 @@ from app.db import repo
 from app.db.models import ApiUsage, Company, SearchOperation, SearchQuery
 from app.discovery import jobs
 from app.discovery import runner as disc
-from app.discovery.yandex_search import SerpItem, YandexSearchError
+from app.discovery.yandex_search import SerpItem, YandexNetworkError, YandexSearchError
 
 TZ = ZoneInfo("Europe/Moscow")
 NIGHT = datetime(2026, 11, 16, 2, 0, tzinfo=TZ).astimezone(timezone.utc)
@@ -167,3 +167,36 @@ class FakeBot:
 
     async def send_message(self, chat_id, text, **kw):
         self.sent.append(text)
+
+
+async def test_network_error_stops_run(env, monkeypatch):
+    monkeypatch.setattr(disc, "utcnow", lambda: NIGHT)
+
+    class NetDown(FakeSearch):
+        async def search(self, query, page=0):
+            self.calls.append((query, page))
+            raise YandexNetworkError("сеть: таймаут")
+
+    search = NetDown()
+    stats = await disc.run_discovery(env, search)
+    assert len(search.calls) == 1  # не перебираем все фразы впустую
+    assert "нет связи с Яндексом" in stats.stopped_reason
+
+
+async def test_poll_network_error_keeps_operation(env, monkeypatch):
+    monkeypatch.setattr(disc, "utcnow", lambda: NIGHT)
+    async with env() as s:
+        await repo.set_setting(s, "YANDEX_SEARCH_MODE", "deferred_v2")
+        await s.commit()
+    search = FakeSearch()
+    await disc.run_discovery(env, search)
+
+    async def net_down(op_id, page=0):
+        raise YandexNetworkError("сеть: ConnectError")
+
+    monkeypatch.setattr(search, "get_operation", net_down)
+    stats = await disc.poll_operations(env, search)
+    assert stats.errors
+    async with env() as s:
+        ops = (await s.execute(select(SearchOperation))).scalars().all()
+        assert {o.status for o in ops} == {"pending"}  # оплаченные операции заберём при следующем опросе

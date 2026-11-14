@@ -28,7 +28,7 @@ from app.discovery.query_policy import (
     record_run,
     stop_paging,
 )
-from app.discovery.yandex_search import SerpItem, YandexSearchClient, YandexSearchError
+from app.discovery.yandex_search import SerpItem, YandexNetworkError, YandexSearchClient, YandexSearchError
 
 Notify = Callable[[str], Awaitable[None]]
 
@@ -328,6 +328,9 @@ async def run_discovery(
                 if "HTTP 401" in str(exc) or "HTTP 403" in str(exc):
                     stats.stopped_reason = "нет доступа к Search API (проверьте ключ и роль search-api.webSearch.user)"
                     break
+                if isinstance(exc, YandexNetworkError):
+                    stats.stopped_reason = f"нет связи с Яндексом ({exc}) — повторите позже"
+                    break
                 continue
             if mode != "deferred_v2":
                 if len(items) < search_client.per_page:
@@ -379,6 +382,11 @@ async def poll_operations(
     for op in ops:
         try:
             items = await search_client.get_operation(op.op_id, op.page)
+        except YandexNetworkError as exc:
+            # операция уже оплачена — не помечаем failed, заберём при следующем опросе (до OPERATION_TTL)
+            logger.warning("poll {}: {}", op.op_id, exc)
+            stats.errors.append(str(exc))
+            break
         except YandexSearchError as exc:
             items = None
             async with session_factory() as session:

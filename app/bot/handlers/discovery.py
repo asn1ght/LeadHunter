@@ -11,6 +11,7 @@ from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
 from aiogram.utils.keyboard import InlineKeyboardBuilder
+from loguru import logger
 from sqlalchemy import func, select
 
 from app.ai.client import month_spent, month_start
@@ -22,7 +23,7 @@ from app.db import repo
 from app.db.models import LLMUsage, Niche, SearchOperation, SearchQuery, utcnow
 from app.db.session import SessionLocal
 from app.integrations import checko
-from app.discovery.jobs import add_found_to_plan, discovery_job
+from app.discovery.jobs import BUSY, add_found_to_plan, discovery_job, discovery_lock
 from app.discovery.query_policy import is_paused, resume
 from app.discovery.runner import (
     estimate_cost,
@@ -34,7 +35,7 @@ from app.discovery.runner import (
 
 router = Router(name="discovery")
 PER_PAGE = 10
-_run_lock = asyncio.Lock()
+_background: set[asyncio.Task[None]] = set()
 
 DEFAULT_REGION_MARKERS = ["санкт-петербург", "спб", "петербург", "ленинградская", "ленобласть", "812", "813"]
 
@@ -302,25 +303,37 @@ async def cmd_run(message: Message, state: FSMContext) -> None:
     await message.answer("\n".join(lines), reply_markup=kb.as_markup())
 
 
+async def run_and_report(bot: Bot, chat_id: int) -> None:
+    """Ручной прогон в фоне: итог или ошибка всегда приходят в чат."""
+    try:
+        stats = await discovery_job(bot, force=True)
+        if stats.stopped_reason == BUSY:
+            await bot.send_message(chat_id, "⏳ Поиск уже идёт (ночной или ручной) — итог придёт, когда закончится.")
+            return
+        await bot.send_message(chat_id, "✅ Поиск завершён\n" + stats.summary())
+        sent = await add_found_to_plan(bot, chat_id)
+        if not sent and stats.new_companies:
+            await bot.send_message(chat_id, "Лидов выше порога нет. Все найденные — в /leads.")
+    except Exception as exc:  # noqa: BLE001 — фоновая задача: иначе ошибка пропадёт молча
+        logger.exception("manual run failed: {}", exc)
+        try:
+            await bot.send_message(chat_id, f"⚠️ Поиск прервался: {escape(type(exc).__name__)}: "
+                                            f"{escape(str(exc)[:300])}\nПодробности в логе.")
+        except Exception:  # noqa: BLE001
+            logger.exception("cannot report manual run failure")
+
+
 @router.callback_query(RunCb.filter(F.action == "go"), StateFilter("*"))
 async def run_go(cb: CallbackQuery, bot: Bot) -> None:
-    if _run_lock.locked():
+    if discovery_lock.locked():
         await cb.answer("Поиск уже идёт", show_alert=True)
         return
     await cb.answer("🚀 Запускаю")
     assert cb.message is not None
     await cb.message.edit_text("⏳ Ищу компании… Это может занять несколько минут, пришлю итог.")
-    chat_id = cb.message.chat.id
-
-    async def job() -> None:
-        async with _run_lock:
-            stats = await discovery_job(bot, force=True)
-            await bot.send_message(chat_id, "✅ Поиск завершён\n" + stats.summary())
-            sent = await add_found_to_plan(bot, chat_id)
-            if not sent and stats.new_companies:
-                await bot.send_message(chat_id, "Лидов выше порога нет. Все найденные — в /leads.")
-
-    asyncio.create_task(job())
+    task = asyncio.create_task(run_and_report(bot, cb.message.chat.id))
+    _background.add(task)  # держим ссылку, иначе задачу может собрать сборщик мусора
+    task.add_done_callback(_background.discard)
 
 
 # ---------------------------------------------------------------- /usage
