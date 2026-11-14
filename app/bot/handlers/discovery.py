@@ -21,6 +21,7 @@ from app.config import get_settings
 from app.db import repo
 from app.db.models import LLMUsage, Niche, SearchOperation, SearchQuery, utcnow
 from app.db.session import SessionLocal
+from app.integrations import checko
 from app.discovery.jobs import add_found_to_plan, discovery_job
 from app.discovery.query_policy import is_paused, resume
 from app.discovery.runner import (
@@ -337,6 +338,8 @@ async def cmd_usage(message: Message, state: FSMContext) -> None:
         spent = await month_spent(session)
         budget = await repo.get_runtime_setting(session, "LLM_MONTHLY_BUDGET_RUB")
         llm_enabled = await repo.get_runtime_setting(session, "LLM_ENABLED")
+        checko_today = await checko.requests_today(session)
+        checko_limit = await repo.get_runtime_setting(session, "CHECKO_DAILY_LIMIT")
         rows = (
             await session.execute(
                 select(LLMUsage.purpose, func.count(LLMUsage.id), func.sum(LLMUsage.prompt_tokens),
@@ -360,4 +363,6 @@ async def cmd_usage(message: Message, state: FSMContext) -> None:
         lines.append(f"- {names.get(purpose, purpose)}: {n} выз., {int(pt or 0) + int(ct or 0)} ток., {float(cost or 0):.2f} ₽")
     if not rows:
         lines.append("- вызовов не было")
+    lines += ["", "🏛 Чекко (реквизиты по ИНН)",
+              f"- Сегодня запросов: {checko_today} из {checko_limit}" + ("" if s.CHEKKO_API_KEY else " · ключ не задан")]
     await message.answer("\n".join(lines))

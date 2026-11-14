@@ -101,9 +101,22 @@ def card_keyboard(company: Company, extra_rows: list[list[InlineKeyboardButton]]
         InlineKeyboardButton(text="🔄 Статус", callback_data=CardCb(action="stmenu", cid=company.id).pack()),
     )
     kb.row(
-        InlineKeyboardButton(text="🔗 Сайт", url=company.url if company.url.startswith("http") else f"http://{company.domain}"),
+        InlineKeyboardButton(text="🏛 Реквизиты", callback_data=CardCb(action="req", cid=company.id).pack()),
         InlineKeyboardButton(text="❓ Почему оценка", callback_data=CardCb(action="why", cid=company.id).pack()),
     )
+    kb.row(
+        InlineKeyboardButton(text="🔗 Сайт", url=company.url if company.url.startswith("http") else f"http://{company.domain}"),
+    )
+    return kb.as_markup()
+
+
+def requisites_keyboard(cid: int, has_inn: bool) -> InlineKeyboardMarkup:
+    kb = InlineKeyboardBuilder()
+    if has_inn:
+        kb.button(text="🔄 Обновить", callback_data=CardCb(action="reqrf", cid=cid))
+    kb.button(text="✏️ Другой ИНН" if has_inn else "✏️ Ввести ИНН", callback_data=CardCb(action="reqinn", cid=cid))
+    kb.button(text="◀️ Назад", callback_data=CardCb(action="back", cid=cid))
+    kb.adjust(2, 1) if has_inn else kb.adjust(1)
     return kb.as_markup()
 
 

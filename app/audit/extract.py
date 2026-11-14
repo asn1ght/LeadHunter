@@ -19,7 +19,10 @@ _PHONE_RE = re.compile(
 )
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 _EMAIL_BAD_TLD = (".png", ".jpg", ".jpeg", ".gif", ".svg", ".webp", ".js", ".css")
-_INN_RE = re.compile(r"ИНН[\s:№ ]*(\d{10}|\d{12})(?!\d)", re.IGNORECASE)
+# «ИНН 7802860317», «ИНН: …», «ИНН/КПП 7802860317/780201001», «И.Н.Н. …»
+_INN_RE = re.compile(
+    r"(?:ИНН|И\.Н\.Н\.|\bINN)(?:\s*/\s*КПП)?[\s:№#.\- ]*(?<!\d)(\d{10}|\d{12})(?!\d)", re.IGNORECASE
+)
 _OGRN_RE = re.compile(r"ОГРН(?:ИП)?[\s:№ ]*(\d{13}|\d{15})(?!\d)", re.IGNORECASE)
 _ORG_RE = re.compile(r"\b(?:ООО|АО|ЗАО|ОАО|ПАО)\s*[«\"“]([^»\"”]{2,60})[»\"”]")
 _ADDRESS_RE = re.compile(

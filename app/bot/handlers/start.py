@@ -27,7 +27,7 @@ HELP = """<b>LeadHunter</b> — поиск клиентов и мини-CRM.
 /run — запустить поиск компаний сейчас
 /queries — поисковые запросы активной ниши
 /niche — переключить или создать нишу
-/usage — расход Search API и DeepSeek за месяц
+/usage — расход Search API, DeepSeek и Чекко
 /cancel — отменить текущий ввод
 /help — эта справка
 

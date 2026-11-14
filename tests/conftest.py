@@ -19,6 +19,17 @@ def no_real_browser(monkeypatch, request):
     monkeypatch.setattr(runner, "capture", fake_capture)
 
 
+@pytest.fixture(autouse=True)
+def no_real_checko(monkeypatch):
+    """Чекко в тестах не вызываем: обогащение после аудита — no-op (проверяется в test_checko.py)."""
+    from app.audit import runner
+
+    async def fake_enrich(session_factory, company_id):
+        return None
+
+    monkeypatch.setattr(runner, "auto_enrich", fake_enrich)
+
+
 @pytest.fixture
 async def session_factory(tmp_path):
     engine = make_engine(f"sqlite+aiosqlite:///{(tmp_path / 't.db').as_posix()}")

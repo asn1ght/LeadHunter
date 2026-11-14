@@ -17,7 +17,13 @@ from selectolax.lexbor import LexborHTMLParser as HTMLParser
 from app.config import get_settings
 
 MAX_HTML_BYTES = 5 * 1024 * 1024
-INTERNAL_LINK_RE = re.compile(r"контакт|contact|kontakt|услуг|uslug|services|service|price|цен", re.I)
+LINK_GROUPS = (  # по приоритету: ИНН чаще всего в «Реквизитах», «Контактах» или «О компании»
+    re.compile(r"реквизит|rekvizit|requisite", re.I),
+    re.compile(r"контакт|contact|kontakt", re.I),
+    re.compile(r"услуг|uslug|services|service|price|цен", re.I),
+    re.compile(r"о компании|o-kompanii|okompanii|about|o-nas|о нас", re.I),
+)
+INTERNAL_LINK_RE = re.compile("|".join(g.pattern for g in LINK_GROUPS), re.I)
 
 
 @dataclass
@@ -148,8 +154,8 @@ async def _robots(client: httpx.AsyncClient, base: str) -> RobotFileParser | Non
         return None
 
 
-def pick_internal_links(html: str, base_url: str, limit: int = 2) -> list[str]:
-    """До `limit` внутренних ссылок на «Контакты» / «Услуги»."""
+def pick_internal_links(html: str, base_url: str, limit: int = 3) -> list[str]:
+    """До `limit` внутренних ссылок: по одной на «Реквизиты», «Контакты», «Услуги», «О компании»."""
     tree = HTMLParser(html)
     base_host = (urlparse(base_url).hostname or "").removeprefix("www.")
     found: list[str] = []
@@ -158,7 +164,9 @@ def pick_internal_links(html: str, base_url: str, limit: int = 2) -> list[str]:
         if not href or href.startswith(("#", "tel:", "mailto:", "javascript:")):
             continue
         text = a.text(strip=True)
-        if not (INTERNAL_LINK_RE.search(href) or INTERNAL_LINK_RE.search(text)):
+        hay = f"{href} {text}"
+        group = next((i for i, g in enumerate(LINK_GROUPS) if g.search(hay)), None)
+        if group is None:
             continue
         full = urljoin(base_url, href).split("#")[0]
         host = (urlparse(full).hostname or "").removeprefix("www.")
@@ -166,17 +174,18 @@ def pick_internal_links(html: str, base_url: str, limit: int = 2) -> list[str]:
             continue
         if re.search(r"\.(pdf|jpe?g|png|docx?|xlsx?|zip|rar)$", full, re.I):
             continue
-        if full not in found:
-            found.append(full)
-        if len(found) >= limit:
-            break
-    return found
+        if all(full != f for f, _ in found):
+            found.append((full, group))
+    # по одной ссылке на группу в порядке приоритета, затем остальные
+    picked = [next(f for f, g in found if g == grp) for grp in range(len(LINK_GROUPS)) if any(g == grp for _, g in found)]
+    picked += [f for f, _ in found if f not in picked]
+    return picked[:limit]
 
 
 RETRY_DELAY_S = 3
 
 
-async def fetch_site(url_or_domain: str, internal_pages: int = 2) -> FetchResult:
+async def fetch_site(url_or_domain: str, internal_pages: int = 3) -> FetchResult:
     """Загрузить сайт; при таймауте или ошибке соединения — одна повторная попытка.
 
     Сайт засчитывается недоступным только если не открылся оба раза.
@@ -189,7 +198,7 @@ async def fetch_site(url_or_domain: str, internal_pages: int = 2) -> FetchResult
     return res
 
 
-async def _fetch_once(url_or_domain: str, internal_pages: int = 2) -> FetchResult:
+async def _fetch_once(url_or_domain: str, internal_pages: int = 3) -> FetchResult:
     """Загрузить главную страницу сайта и до `internal_pages` внутренних.
 
     Без схемы сначала пробуем https, при ошибке соединения — http.

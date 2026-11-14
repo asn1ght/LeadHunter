@@ -96,7 +96,9 @@ async def month_requests(session: AsyncSession) -> int:
     return int(
         (
             await session.execute(
-                select(func.coalesce(func.sum(ApiUsage.requests), 0)).where(ApiUsage.created_at >= month_start())
+                select(func.coalesce(func.sum(ApiUsage.requests), 0)).where(
+                    ApiUsage.created_at >= month_start(), ApiUsage.api.like("yandex%")
+                )
             )
         ).scalar_one()
     )

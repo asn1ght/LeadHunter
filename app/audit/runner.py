@@ -13,6 +13,7 @@ from app.audit.fetcher import FetchResult, fetch_site
 from app.audit.scoring import ScoreResult, Weights, compute_score
 from app.audit.tech_checks import TechReport, run_checks
 from app.db import repo
+from app.integrations.checko import auto_enrich
 from app.db.models import Audit, Company, utcnow
 
 _semaphore: asyncio.Semaphore | None = None
@@ -112,7 +113,8 @@ async def audit_company(session_factory: async_sessionmaker[AsyncSession], compa
         audit = await save_audit(session, company, fetch, ex, tech, score)
         await session.commit()
         logger.info("audit {} → score {} ({} issues)", company.domain, score.score, len(tech.issues))
-        return audit
+    await auto_enrich(session_factory, company_id)  # реквизиты и финансы из Чекко по ИНН
+    return audit
 
 
 async def save_audit(

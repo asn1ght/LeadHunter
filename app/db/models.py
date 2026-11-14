@@ -89,6 +89,8 @@ class Company(Base):
     url: Mapped[str] = mapped_column(String(1024))
     name: Mapped[str | None] = mapped_column(String(255), nullable=True)
     inn: Mapped[str | None] = mapped_column(String(12), nullable=True, index=True)
+    checko: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # сводка Чекко (реквизиты, финансы)
+    checko_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
     segment: Mapped[str] = mapped_column(String(16), default="unknown")
 
     phones: Mapped[list[str]] = mapped_column(JSON, default=list)

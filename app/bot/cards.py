@@ -1,12 +1,14 @@
 """Рендер карточки лида (раздел 8.4)."""
 from __future__ import annotations
 
+from datetime import date
 from html import escape
 
 from app.audit.extract import format_phone
 from app.config import get_settings
 from app.crm.statuses import label
 from app.db.models import Audit, Company
+from app.integrations import checko
 from app.utils.dates import fmt_dt
 
 TAG_WARNINGS = {
@@ -45,8 +47,6 @@ def render_card(company: Company, audit: Audit | None, threshold: int, prefix: s
     if audit and audit.cms:
         meta.append(escape(audit.cms))
     lines.append("🌐 " + " · ".join(meta))
-    if company.inn:
-        lines.append(f"🏢 ИНН {company.inn}")
     if company.address:
         lines.append(f"📍 {escape(company.address)}")
 
@@ -69,6 +69,7 @@ def render_card(company: Company, audit: Audit | None, threshold: int, prefix: s
     for tag in company.tags or []:
         if tag in TAG_WARNINGS:
             lines.append(TAG_WARNINGS[tag])
+    lines += requisites_block(company)
 
     points = main_points(audit)
     llm = (audit.llm_summary if audit else None) or {}
@@ -95,6 +96,103 @@ def render_card(company: Company, audit: Audit | None, threshold: int, prefix: s
 
     text = "\n".join(lines)
     return text[:4000]
+
+
+def requisites_block(company: Company) -> list[str]:
+    """Короткий блок «кто за сайтом» в карточке: юрлицо, статус, директор, выручка, риски (Чекко)."""
+    s = company.checko or {}
+    if not company.inn:
+        return []
+    if not s or s.get("inn") != company.inn:
+        return ["", f"🏢 ИНН {company.inn} · сведения — кнопка «🏛 Реквизиты»"]
+    if s.get("not_found"):
+        return ["", f"🏢 ИНН {company.inn} — ⚠️ в ЕГРЮЛ/ЕГРИП не найден (опечатка на сайте?)"]
+    lines = ["", f"🏛 <b>{escape(s.get('name') or '')}</b> · ИНН {company.inn}", checko.status_line(s)]
+    d = s.get("director") or {}
+    if d.get("fio") and s.get("kind") == "ul":
+        since = f", с {fmt_iso(d['since'])}" if d.get("since") else ""
+        lines.append(f"👔 {escape(d.get('post') or 'Руководитель')} — {escape(d['fio'])}{since}")
+    fin = s.get("finance")
+    if fin:
+        fin_line = f"📊 {fin['year']}: {checko.revenue_line(fin)}"
+        profit = checko.profit_line(fin)
+        if profit:
+            fin_line += f" · {profit.lower() if fin.get('revenue') else profit}"
+        lines.append(fin_line)
+    for r in (s.get("risks") or [])[:2]:
+        lines.append(f"⚠️ {escape(r)}")
+    who = checko.first_names(d.get("fio"))
+    if who and s.get("active"):
+        lines.append(f"👋 Обращение к руководителю: {escape(who)}")
+    return lines
+
+
+def fmt_iso(iso: str | None) -> str:
+    try:
+        return date.fromisoformat((iso or "")[:10]).strftime("%d.%m.%Y")
+    except ValueError:
+        return iso or ""
+
+
+def render_requisites(company: Company) -> str:
+    """Подробный экран «🏛 Реквизиты» по данным Чекко."""
+    s = company.checko or {}
+    head = f"🏛 <b>Реквизиты</b> — {escape(company.domain)}"
+    if not company.inn:
+        return f"{head}\n\nИНН на сайте не найден."
+    if not s or s.get("inn") != company.inn:
+        return f"{head}\n\n🏢 ИНН {company.inn}\nСведения ещё не загружены — нажмите «🔄 Обновить»."
+    if s.get("not_found"):
+        return (f"{head}\n\n🏢 ИНН {company.inn}\n⚠️ Организация с таким ИНН не найдена в ЕГРЮЛ/ЕГРИП.\n"
+                "Возможно, на сайте опечатка — пришлите верный ИНН кнопкой «✏️ Другой ИНН».")
+    lines = [head, "", f"<b>{escape(s.get('name') or '')}</b>"]
+    if s.get("full_name") and s["full_name"].upper() != (s.get("name") or "").upper():
+        lines.append(f"<i>{escape(s['full_name'])}</i>")
+    ids = f"ИНН <code>{s.get('inn')}</code>"
+    if s.get("ogrn"):
+        ids += f" · {'ОГРНИП' if s.get('kind') == 'ip' else 'ОГРН'} <code>{s['ogrn']}</code>"
+    lines.append(ids)
+    lines.append(checko.status_line(s))
+    if s.get("reg_date"):
+        lines.append(f"📅 Зарегистрирована {checko.human_date(s['reg_date'])}")
+    if s.get("address"):
+        lines.append(f"📍 {escape(s['address'])}")
+    if s.get("okved"):
+        lines.append(f"🔧 ОКВЭД {escape(s['okved'][:150])}")
+    if s.get("capital"):
+        lines.append(f"💼 Уставный капитал {checko.money(s['capital'])}")
+
+    d = s.get("director") or {}
+    if d.get("fio"):
+        lines += ["", f"👔 <b>{escape(d.get('post') or 'Руководитель')}</b>", escape(d["fio"])]
+        if d.get("inn"):
+            lines.append(f"ИНН {d['inn']}")
+        if d.get("since"):
+            lines.append(f"с {checko.human_date(d['since'])}")
+    founders = s.get("founders") or []
+    if founders:
+        lines += ["", "🤝 <b>Учредители</b>"]
+        for f in founders:
+            share = f" — {float(f['share']):g}%" if f.get("share") not in (None, "") else ""
+            lines.append(f"• {escape(f.get('name') or '')}{share}")
+
+    fin = s.get("finance")
+    if fin:
+        lines += ["", f"📊 <b>Финансовая отчётность за {fin['year']} год</b>", checko.revenue_line(fin)]
+        profit = checko.profit_line(fin)
+        if profit:
+            lines.append(profit)
+        if fin.get("report_url"):
+            lines.append(f'📄 <a href="{escape(fin["report_url"])}">Отчёт в ГИР БО (ФНС)</a>')
+    elif s.get("kind") == "ip":
+        lines += ["", "📊 ИП не сдают бухотчётность — выручки в открытых данных нет."]
+
+    risks = s.get("risks") or []
+    lines += ["", "⚠️ <b>Риски</b>"] + [f"• {escape(r)}" for r in risks] if risks else ["", "🛡 Рисков не найдено"]
+    fetched = s.get("fetched_at")
+    if fetched:
+        lines += ["", f"<i>Данные Чекко на {fmt_iso(fetched)}</i>"]
+    return "\n".join(lines)[:4000]
 
 
 def main_points(audit: Audit | None) -> list[str]:

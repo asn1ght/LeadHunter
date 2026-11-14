@@ -42,7 +42,7 @@ def run_migrations() -> None:
 
 
 def build_dispatcher() -> Dispatcher:
-    from app.bot.handlers import add, ai_actions, card_actions, discovery, fallback, leads, pdf, reports, start
+    from app.bot.handlers import add, ai_actions, card_actions, discovery, fallback, leads, pdf, reports, requisites, start
     from app.bot.middlewares import AdminOnlyMiddleware
 
     dp = Dispatcher(storage=MemoryStorage())
@@ -50,7 +50,7 @@ def build_dispatcher() -> Dispatcher:
     # порядок важен: команды/меню → разделы → сценарии карточки → fallback
     dp.include_routers(
         start.router, leads.router, reports.router, discovery.router, add.router,
-        ai_actions.router, pdf.router, card_actions.router, fallback.router,
+        ai_actions.router, pdf.router, requisites.router, card_actions.router, fallback.router,
     )
     return dp
 

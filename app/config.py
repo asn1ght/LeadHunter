@@ -91,6 +91,12 @@ class Settings(BaseSettings):
     OWNER_TELEGRAM: str = ""
     OWNER_EMAIL: str = ""
 
+    # Чекко (checko.ru): реквизиты, руководитель, финансы по ИНН
+    CHEKKO_API_KEY: str = ""
+    CHECKO_ENABLED: bool = True
+    CHECKO_DAILY_LIMIT: int = 90  # бесплатно 100 запросов/сутки; ООО = 2 запроса, ИП = 1
+    CHECKO_REFRESH_DAYS: int = 90  # перезапрашивать сведения не чаще
+
     # Playwright (этап 4)
     BROWSER_ENABLED: bool = True
     BROWSER_CONCURRENCY: int = 2

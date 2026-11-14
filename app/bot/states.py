@@ -40,3 +40,9 @@ class QueryFlow(StatesGroup):
 class NicheFlow(StatesGroup):
     waiting_name = State()
     waiting_keywords = State()
+
+
+class InnFlow(StatesGroup):
+    """Ручной ввод ИНН для проверки через Чекко."""
+
+    waiting_inn = State()
