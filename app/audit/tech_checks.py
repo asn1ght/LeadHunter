@@ -104,13 +104,18 @@ def run_checks(fetch: FetchResult, now: datetime | None = None, browser: Browser
 
     if not fetch.ok:
         what = (
-            "сайт не отвечает (таймаут)"
+            "не отвечает (таймаут)"
             if fetch.error == "timeout"
             else f"ошибка {fetch.status}"
             if fetch.status
-            else "сайт недоступен"
+            else "нет соединения"
         )
-        add(Issue("site_down", 3, f"Сайт не работает: {what}", fetch.error or ""))
+        title = (
+            f"Сайт не открылся: {what} — проверьте вручную"
+            if not fetch.status
+            else f"Сайт не работает: {what}"
+        )
+        add(Issue("site_down", 3, title, fetch.error or ""))
         if not fetch.html:
             m["https"] = None
             return rep

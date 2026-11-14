@@ -17,10 +17,23 @@ from app.config import CONFIG_DIR
 _extract = tldextract.TLDExtract(suffix_list_urls=(), include_psl_private_domains=True)
 
 
-def normalize_domain(url_or_host: str) -> str | None:
-    """Привести URL/хост к регистрируемому домену (eTLD+1) в нижнем регистре.
+@lru_cache
+def load_platforms() -> frozenset[str]:
+    """Хостинги/конструкторы из config/platforms.yaml: каждый их поддомен — отдельный сайт."""
+    path = CONFIG_DIR / "platforms.yaml"
+    if not path.exists():
+        return frozenset()
+    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    return frozenset(str(d).lower().strip() for group in data.values() for d in (group or []))
 
-    «https://www.GazSever.com/contacts» → «gazsever.com». None — если это не домен.
+
+def normalize_domain(url_or_host: str) -> str | None:
+    """Ключ сайта: регистрируемый домен (eTLD+1) в нижнем регистре.
+
+    «https://www.GazSever.com/contacts» → «gazsever.com».
+    Для поддоменов хостингов и конструкторов (config/platforms.yaml) — полный адрес:
+    «https://ci697493.tw1.ru/#» → «ci697493.tw1.ru», потому что там каждый поддомен — отдельный клиент.
+    None — если это не домен.
     """
     s = url_or_host.strip().strip("<>\"'").lower()
     if not s:
@@ -34,7 +47,10 @@ def normalize_domain(url_or_host: str) -> str | None:
     ext = _extract(host)
     if not ext.suffix or not ext.domain:
         return None
-    return f"{ext.domain}.{ext.suffix}"
+    registered = f"{ext.domain}.{ext.suffix}"
+    if ext.subdomain and registered in load_platforms():
+        return host
+    return registered
 
 
 def extract_urls(text: str) -> list[str]:

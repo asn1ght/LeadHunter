@@ -1,0 +1,46 @@
+# Хостинги и конструкторы сайтов, где КАЖДЫЙ поддомен — отдельный сайт отдельного клиента.
+# Для них домен лида = полный адрес (ci697493.tw1.ru), а не «основной домен» (tw1.ru).
+# Обычные сайты по-прежнему сводятся к основному домену: www.site.ru, spb.site.ru → site.ru.
+# Дополняйте список, если встретите новую платформу.
+hosting:
+  - tw1.ru            # Timeweb, технический домен
+  - tmweb.ru          # Timeweb (старый)
+  - timeweb.ru
+  - beget.tech        # Beget
+  - myjino.ru         # Jino
+  - sprinthost.ru
+  - ihc.ru
+  - na4u.ru
+  - 1gb.ru
+  - hostingem.ru
+  - netangels.ru
+  - spaceweb.pro
+  - ru-host.ru
+builders:
+  - tilda.ws          # Tilda
+  - tilda.ru
+  - nethouse.ru
+  - ucoz.ru
+  - ucoz.net
+  - ucoz.com
+  - narod.ru
+  - narod2.ru
+  - wixsite.com
+  - wix.com
+  - mya5.ru
+  - taplink.site
+  - taplink.ws
+  - turbo.site        # Яндекс Турбо-сайты
+  - ukit.me
+  - webnode.ru
+  - jimdofree.com
+  - lpmotor.ru
+  - flexbe.com
+  - flexbe.ru
+  - craftum.io
+  - okis.ru
+  - umi.ru
+  - 1c-umi.ru
+  - setup.ru
+  - insales.ru
+  - megagroup.ru

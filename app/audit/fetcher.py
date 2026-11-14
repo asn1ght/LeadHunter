@@ -173,7 +173,23 @@ def pick_internal_links(html: str, base_url: str, limit: int = 2) -> list[str]:
     return found
 
 
+RETRY_DELAY_S = 3
+
+
 async def fetch_site(url_or_domain: str, internal_pages: int = 2) -> FetchResult:
+    """Загрузить сайт; при таймауте или ошибке соединения — одна повторная попытка.
+
+    Сайт засчитывается недоступным только если не открылся оба раза.
+    """
+    res = await _fetch_once(url_or_domain, internal_pages)
+    if res.error and (res.error == "timeout" or res.error.startswith("connect")):
+        logger.info("fetch {} failed ({}), retry in {} s", url_or_domain, res.error, RETRY_DELAY_S)
+        await asyncio.sleep(RETRY_DELAY_S)
+        res = await _fetch_once(url_or_domain, internal_pages)
+    return res
+
+
+async def _fetch_once(url_or_domain: str, internal_pages: int = 2) -> FetchResult:
     """Загрузить главную страницу сайта и до `internal_pages` внутренних.
 
     Без схемы сначала пробуем https, при ошибке соединения — http.

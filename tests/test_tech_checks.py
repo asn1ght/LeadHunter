@@ -65,3 +65,30 @@ def test_cms():
     assert detect_cms('<script src="https://static.tildacdn.com/x.js">') == "Tilda"
     assert detect_cms('<link href="/bitrix/templates/a.css">') == "1C-Bitrix"
     assert detect_cms("<html></html>") == "самопис"
+
+
+def test_site_down_wording():
+    timeout = run_checks(FetchResult(requested_url="https://x.ru", error="timeout"))
+    assert timeout.issues[0].title == "Сайт не открылся: не отвечает (таймаут) — проверьте вручную"
+    err = run_checks(FetchResult(requested_url="https://x.ru", final_url="https://x.ru/", status=503, html=""))
+    assert err.issues[0].title == "Сайт не работает: ошибка 503"
+
+
+async def test_fetch_retries_once(monkeypatch):
+    from app.audit import fetcher
+
+    calls = []
+
+    async def fake_once(url, internal_pages=2):
+        calls.append(url)
+        if len(calls) == 1:
+            return FetchResult(requested_url=url, error="timeout")
+        return FetchResult(requested_url=url, final_url=url, status=200, html="<html></html>", html_bytes=13)
+
+    async def nosleep(*a):
+        return None
+
+    monkeypatch.setattr(fetcher, "_fetch_once", fake_once)
+    monkeypatch.setattr(fetcher.asyncio, "sleep", nosleep)
+    res = await fetcher.fetch_site("https://x.ru")
+    assert res.ok and len(calls) == 2
