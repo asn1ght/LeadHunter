@@ -11,6 +11,8 @@
 - Техзадание и этапы — `PLAN.md`. Работать по этапам, после каждого: тесты, короткий отчёт.
 - Python 3.12 в `.venv` (системный Python 3.10 не подходит): `.venv\Scripts\python -m pytest -q`.
 - Запуск бота: `.venv\Scripts\python -m app.main` (или ▶ на `app/main.py`).
+- Браузер для аудита и PDF (этап 4): после установки зависимостей `.venv\Scripts\python -m playwright install chromium`.
+- Тесты не должны писать в `data/`: браузер в тестах подменён заглушкой (`tests/conftest.py`), настоящий Chromium — только с маркером `real_browser` и во временной папке.
 - Смена статуса лида — только через `app.crm.service.change_status()`; отчёты считаются по `events`.
 - Схема БД меняется только миграциями Alembic (`alembic revision --autogenerate`), для SQLite — batch-режим.
 - Тексты бота — на русском, коротко, с эмодзи.

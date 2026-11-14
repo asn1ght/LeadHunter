@@ -1,15 +1,18 @@
-"""Технические проверки сайта (раздел 7.2). Без Playwright — это этап 4."""
+"""Технические проверки сайта (раздел 7.2): httpx-слой + браузерный слой Playwright (если есть)."""
 from __future__ import annotations
 
 import re
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from selectolax.lexbor import LexborHTMLParser as HTMLParser
 
 from app.audit.extract import detect_messengers
 from app.audit.fetcher import FetchResult
+
+if TYPE_CHECKING:
+    from app.audit.browser import BrowserResult
 
 
 @dataclass
@@ -49,6 +52,7 @@ CMS_MARKERS: list[tuple[str, tuple[str, ...]]] = [
     ("UMI.CMS", ("umi.cms", "/umi/")),
 ]
 
+SLOW_LOAD_MS = 4000  # Playwright: событие load дольше 4 с
 CTA_RE = re.compile(r"заказ|заявк|консульт|рассчит|расчет|расчёт|звонок|оставить|получить|связат|узнать", re.I)
 PHONE_FIELD_RE = re.compile(r"phone|tel|телефон|email|e-mail|почт|mail", re.I)
 
@@ -82,8 +86,12 @@ def _newest_upload_year(html: str) -> int | None:
     return max(years) if years else None
 
 
-def run_checks(fetch: FetchResult, now: datetime | None = None) -> TechReport:
-    """Прогнать все технические проверки по результату загрузки."""
+def run_checks(fetch: FetchResult, now: datetime | None = None, browser: BrowserResult | None = None) -> TechReport:
+    """Прогнать все технические проверки.
+
+    browser — результат Playwright: даёт реальное время загрузки (slow_load > 4 с), mobile_overflow
+    и скриншоты. Без него slow_load считается по TTFB (> 1.5 с).
+    """
     now = now or datetime.now()
     rep = TechReport()
     add = rep.issues.append
@@ -132,8 +140,21 @@ def run_checks(fetch: FetchResult, now: datetime | None = None) -> TechReport:
     if not vp:
         add(Issue("no_viewport", 3, "Нет мобильной версии (meta viewport)"))
 
-    if fetch.ttfb_ms and fetch.ttfb_ms > 1500:
+    if browser is not None and browser.load_ms is not None:
+        m["load_ms"] = browser.load_ms
+        if browser.load_ms > SLOW_LOAD_MS:
+            add(Issue("slow_load", 2, f"Загрузка {browser.load_ms / 1000:.1f} с (норма до 3)"))
+    elif fetch.ttfb_ms and fetch.ttfb_ms > 1500:
         add(Issue("slow_load", 2, f"Медленный ответ сервера: {fetch.ttfb_ms / 1000:.2f} с (норма до 1.5)"))
+
+    if browser is not None:
+        m["mobile_overflow"] = browser.mobile_overflow
+        m["screenshot_desktop"] = browser.screenshot_desktop
+        m["screenshot_mobile"] = browser.screenshot_mobile
+        if browser.mobile_overflow:
+            add(Issue("mobile_overflow", 3,
+                      f"На телефоне страница шире экрана ({browser.mobile_scroll_width} px при 375) — "
+                      "едет вбок"))
 
     scripts = tree.css("script")
     m["scripts_count"] = len(scripts)

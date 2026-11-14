@@ -7,6 +7,7 @@ from datetime import datetime
 from loguru import logger
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.audit.browser import capture
 from app.audit.extract import Extracted, extract
 from app.audit.fetcher import FetchResult, fetch_site
 from app.audit.scoring import ScoreResult, Weights, compute_score
@@ -68,6 +69,7 @@ async def audit_company(session_factory: async_sessionmaker[AsyncSession], compa
         url = company.url
         cfg = niche_config(company.niche)
         concurrency = await repo.get_runtime_setting(session, "AUDIT_CONCURRENCY")
+        use_browser = bool(await repo.get_runtime_setting(session, "BROWSER_ENABLED"))
 
     try:
         async with _sem(concurrency):
@@ -77,7 +79,12 @@ async def audit_company(session_factory: async_sessionmaker[AsyncSession], compa
             region_markers=cfg.get("region_markers", []),
             niche_keywords=cfg.get("keywords", []),
         )
-        tech = run_checks(fetch, now=datetime.now())
+        browser = None
+        if fetch.ok and use_browser:
+            browser = await capture(fetch.final_url or url, company_id)
+            if browser.error:
+                logger.info("browser layer for {}: {}", url, browser.error)
+        tech = run_checks(fetch, now=datetime.now(), browser=browser)
     except Exception as exc:  # noqa: BLE001
         logger.exception("audit failed for {}: {}", url, exc)
         async with session_factory() as session:
@@ -149,6 +156,9 @@ async def save_audit(
         forms_count=m.get("forms_count"),
         form_fields=m.get("form_fields") or [],
         anchor_only_ctas=m.get("anchor_only_ctas"),
+        mobile_overflow=m.get("mobile_overflow"),
+        screenshot_desktop=m.get("screenshot_desktop"),
+        screenshot_mobile=m.get("screenshot_mobile"),
         issues=[i.to_dict() for i in tech.issues],
         score_factors=score.factors,
         raw_text_excerpt=ex.text or None,

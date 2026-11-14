@@ -93,6 +93,10 @@ def card_keyboard(company: Company, extra_rows: list[list[InlineKeyboardButton]]
         InlineKeyboardButton(text="✍️ Письмо", callback_data=CardCb(action="letter", cid=company.id).pack()),
     )
     kb.row(
+        InlineKeyboardButton(text="📄 PDF-аудит", callback_data=CardCb(action="pdf", cid=company.id).pack()),
+        InlineKeyboardButton(text="🖼 Скрины", callback_data=CardCb(action="shots", cid=company.id).pack()),
+    )
+    kb.row(
         InlineKeyboardButton(text="📝 Заметка", callback_data=CardCb(action="note", cid=company.id).pack()),
         InlineKeyboardButton(text="🔄 Статус", callback_data=CardCb(action="stmenu", cid=company.id).pack()),
     )

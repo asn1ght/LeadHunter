@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     OWNER_TELEGRAM: str = ""
     OWNER_EMAIL: str = ""
 
+    # Playwright (этап 4)
+    BROWSER_ENABLED: bool = True
+    BROWSER_CONCURRENCY: int = 2
+
     # HTTP
     HTTP_TIMEOUT: float = 20
     USER_AGENT: str = "Mozilla/5.0 (compatible; LeadHunterAudit/1.0)"

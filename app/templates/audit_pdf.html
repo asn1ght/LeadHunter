@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<title>Мини-аудит {{ domain }}</title>
+<style>
+  @page { size: A4; margin: 0; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; }
+  body {
+    width: 210mm;
+    font-family: "Segoe UI", "Helvetica Neue", Arial, "DejaVu Sans", sans-serif;
+    color: #1d2330; font-size: 10.5pt; line-height: 1.38;
+    -webkit-print-color-adjust: exact; print-color-adjust: exact;
+  }
+  .page { padding: 12mm 13mm 10mm; min-height: 297mm; display: flex; flex-direction: column; }
+  header { display: flex; justify-content: space-between; align-items: flex-start;
+           border-bottom: 2px solid #1d2330; padding-bottom: 4mm; margin-bottom: 5mm; }
+  .kicker { font-size: 9pt; letter-spacing: .08em; text-transform: uppercase; color: #6b7385; }
+  h1 { font-size: 20pt; margin: 1mm 0 0; line-height: 1.15; }
+  .domain { color: #3a4a6b; font-size: 11pt; margin-top: 1mm; }
+  .owner { text-align: right; font-size: 9pt; color: #3a4150; }
+  .owner b { font-size: 10.5pt; color: #1d2330; }
+  .score { display: inline-block; margin-top: 2mm; padding: 1mm 3mm; border-radius: 3mm;
+           background: #fdeaea; color: #a32020; font-weight: 700; font-size: 10pt; }
+  .shots { display: flex; gap: 5mm; align-items: flex-start; margin-bottom: 5mm; }
+  .col { display: flex; flex-direction: column; }
+  .col.desktop { flex: 1; }
+  .col.mobile { width: 40mm; }
+  .lbl { font-size: 8pt; color: #6b7385; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 1.2mm; }
+  .shot { border: 1px solid #d5d9e2; border-radius: 2mm; overflow: hidden; background: #f4f5f8; height: 86mm; }
+  .shot img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top; }
+  .noshot { display: flex; align-items: center; justify-content: center; color: #8a91a1; font-size: 9pt; height: 100%; }
+  .summary { background: #f4f5f8; border-left: 3px solid #3a4a6b; padding: 3mm 4mm; margin-bottom: 4mm; }
+  h2 { font-size: 13pt; margin: 0 0 2.5mm; }
+  ol.points { margin: 0 0 4mm; padding-left: 6mm; }
+  ol.points li { margin-bottom: 2.4mm; }
+  ol.points b { display: block; }
+  ol.points span { color: #4a5263; }
+  .cost { background: #fff7e6; border: 1px solid #f0d9a8; border-radius: 2mm; padding: 3mm 4mm; margin-bottom: 4mm; }
+  .cost ul { margin: 0; padding-left: 5mm; }
+  .cost li { margin-bottom: 1.5mm; }
+  footer { margin-top: auto; border-top: 1px solid #d5d9e2; padding-top: 3mm;
+           display: flex; justify-content: space-between; align-items: center; font-size: 9.5pt; }
+  .cta { font-weight: 700; color: #1d2330; }
+</style>
+</head>
+<body>
+<div class="page">
+  <header>
+    <div>
+      <div class="kicker">Мини-аудит сайта · {{ date }}</div>
+      <h1>{{ company_name }}</h1>
+      <div class="domain">{{ domain }}</div>
+      {% if score is not none %}<div class="score">Насколько сайту нужна доработка: {{ score }}/100</div>{% endif %}
+    </div>
+    <div class="owner">
+      {% if owner.name %}<b>{{ owner.name }}</b><br>{% endif %}
+      Сайты и Яндекс Директ<br>для компаний СПб и ЛО
+    </div>
+  </header>
+
+  <div class="shots">
+    <div class="col desktop">
+      <div class="lbl">Так сайт видят с компьютера</div>
+      <div class="shot">{% if desktop %}<img src="{{ desktop }}" alt="">{% else %}<div class="noshot">Скриншот недоступен</div>{% endif %}</div>
+    </div>
+    <div class="col mobile">
+      <div class="lbl">С телефона</div>
+      <div class="shot">{% if mobile %}<img src="{{ mobile }}" alt="">{% else %}<div class="noshot">—</div>{% endif %}</div>
+    </div>
+  </div>
+
+  {% if summary %}<div class="summary">{{ summary }}</div>{% endif %}
+
+  <h2>Что мешает сайту приносить заявки</h2>
+  <ol class="points">
+    {% for p in points %}
+    <li><b>{{ p.title }}</b>{% if p.why %}<span>{{ p.why }}</span>{% endif %}</li>
+    {% else %}
+    <li><b>Явных технических проблем не найдено</b></li>
+    {% endfor %}
+  </ol>
+
+  <div class="cost">
+    <h2>Что это стоит компании</h2>
+    <ul>{% for c in costs %}<li>{{ c }}</li>{% endfor %}</ul>
+  </div>
+
+  <footer>
+    <div class="cta">Могу показать подробный разбор за 10 минут — бесплатно.</div>
+    <div>
+      {% for v in [owner.phone, owner.telegram, owner.email] if v %}{{ v }}{% if not loop.last %} · {% endif %}{% endfor %}
+    </div>
+  </footer>
+</div>
+</body>
+</html>
