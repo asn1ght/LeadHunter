@@ -1,14 +1,17 @@
 """Списки лидов: /new, /leads, /today, /find."""
 from __future__ import annotations
 
+import math
 from datetime import datetime, time, timedelta
 from html import escape
 
 from aiogram import Bot, F, Router
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, CommandObject, StateFilter
+from aiogram.filters.callback_data import CallbackData
 from aiogram.fsm.context import FSMContext
-from aiogram.types import CallbackQuery, InlineKeyboardMarkup, Message
+from aiogram.types import CallbackQuery, InlineKeyboardButton, InlineKeyboardMarkup, Message
+from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.bot.common import send_card
 from app.bot.handlers.start import USER_TEXT
@@ -18,6 +21,8 @@ from app.bot.keyboards import (
     BTN_TODAY,
     CardCb,
     ListCb,
+    NavCb,
+    lead_button,
     leads_list,
     main_menu,
     open_buttons,
@@ -26,6 +31,7 @@ from app.bot.keyboards import (
 )
 from app.bot.states import FindFlow
 from app.config import get_settings
+from app.crm import workplan
 from app.crm.statuses import Status, label, parse_status
 from app.db import repo
 from app.db.models import utcnow
@@ -96,25 +102,28 @@ async def open_card(cb: CallbackQuery, callback_data: CardCb, bot: Bot) -> None:
 
 # ---------------------------------------------------------------- /today
 
+TODAY_PER_PAGE = 15
+WD = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"]
 
-@router.message(Command("today"), StateFilter("*"))
-@router.message(F.text == BTN_TODAY, StateFilter("*"))
-async def cmd_today(message: Message, state: FSMContext) -> None:
-    await state.clear()
+
+class TodayCb(CallbackData, prefix="td"):
+    page: int = 0
+
+
+async def build_today(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
+    """Напоминания (просроченные и на сегодня) + очередь обзвона с темпом до пятницы."""
     tz = get_settings().tz
-    now_local = utcnow().astimezone(tz)
-    day_start = datetime.combine(now_local.date(), time(0), tz)
-    day_end = day_start + timedelta(days=1)
-
+    now = utcnow()
+    now_local = now.astimezone(tz)
+    day_end = datetime.combine(now_local.date() + timedelta(days=1), time(0), tz)
     async with SessionLocal() as session:
         reminders = await repo.open_reminders_before(session, day_end)
-        new, total_new = await repo.list_companies(session, status=Status.NEW.value, limit=5)
+        queue = await workplan.call_queue(session)
+        in_pool = len(await workplan.pool(session))
 
-    overdue = [r for r in reminders if r.due_at < utcnow()]
-    today = [r for r in reminders if r.due_at >= utcnow()]
-    wd = ["пн", "вт", "ср", "чт", "пт", "сб", "вс"][now_local.weekday()]
-    lines = [f"📞 <b>Сегодня, {wd} {now_local:%d.%m}</b>"]
-    buttons = []
+    overdue = [r for r in reminders if r.due_at < now]
+    today = [r for r in reminders if r.due_at >= now]
+    lines = [f"📞 <b>Сегодня, {WD[now_local.weekday()]} {now_local:%d.%m}</b>"]
 
     def rline(r) -> str:  # type: ignore[no-untyped-def]
         c = r.company
@@ -124,16 +133,72 @@ async def cmd_today(message: Message, state: FSMContext) -> None:
 
     if overdue:
         lines += ["", f"⚠️ Просрочено ({len(overdue)}):"] + [rline(r) for r in overdue]
-    lines += ["", f"⏰ На сегодня ({len(today)}):"] + ([rline(r) for r in today] or ["—"])
-    lines += ["", f"🆕 Новые ({total_new}), топ по оценке:"]
-    lines += [f"• {c.score if c.score is not None else '—'} · {escape(c.name or c.domain)}" for c in new] or ["—"]
+    lines += ["", f"⏰ Напоминания на сегодня ({len(today)}):"] + ([rline(r) for r in today] or ["—"])
 
+    pace = workplan.daily_pace(len(queue), now_local.date())
+    head = f"📋 К обзвону: {len(queue)}"
+    if pace:
+        head += f" · ≈{pace} сегодня, чтобы успеть до пятницы"
+    lines += ["", head]
+    pages = max(1, math.ceil(len(queue) / TODAY_PER_PAGE))
+    page = min(page, pages - 1)
+    chunk = queue[page * TODAY_PER_PAGE:(page + 1) * TODAY_PER_PAGE]
+    week0 = workplan.week_start_utc(now)
+    for c in chunk:
+        since = c.notified_at or c.created_at
+        carried = " ↪️" if since < week0 else ""
+        st = "📞" if c.status == Status.CALL1_NEEDED.value else "🆕"
+        score = c.score if c.score is not None else "—"
+        lines.append(f"• {score} · {escape(c.name or c.domain)} · {st} с {since.astimezone(tz):%d.%m}{carried}")
+    if not queue:
+        lines.append("— очередь пуста" + (f", в запасе {in_pool} → /new" if in_pool else ""))
+    elif any((c.notified_at or c.created_at) < week0 for c in queue):
+        lines.append("<i>↪️ — перенесено с прошлой недели</i>")
+
+    kb = InlineKeyboardBuilder()
     seen: set[int] = set()
-    for c in [r.company for r in overdue + today] + new:
+    for c in [r.company for r in overdue + today] + chunk:
         if c.id not in seen:
             seen.add(c.id)
-            buttons.append(c)
-    await message.answer("\n".join(lines), reply_markup=open_buttons(buttons[:20]))
+            kb.row(lead_button(c))
+    if pages > 1:
+        nav = []
+        if page > 0:
+            nav.append(InlineKeyboardButton(text="◀️", callback_data=TodayCb(page=page - 1).pack()))
+        nav.append(InlineKeyboardButton(text=f"{page + 1}/{pages}", callback_data=TodayCb(page=page).pack()))
+        if page + 1 < pages:
+            nav.append(InlineKeyboardButton(text="▶️", callback_data=TodayCb(page=page + 1).pack()))
+        kb.row(*nav)
+    kb.row(InlineKeyboardButton(text="🏠 Меню", callback_data=NavCb(action="menu").pack()))
+    return "\n".join(lines)[:4000], kb.as_markup()
+
+
+@router.message(Command("today"), StateFilter("*"))
+@router.message(F.text == BTN_TODAY, StateFilter("*"))
+async def cmd_today(message: Message, state: FSMContext) -> None:
+    await state.clear()
+    text, kb = await build_today()
+    await message.answer(text, reply_markup=kb)
+
+
+@router.callback_query(NavCb.filter(F.action == "today"), StateFilter("*"))
+async def nav_today(cb: CallbackQuery, state: FSMContext) -> None:
+    await state.clear()
+    if cb.message:
+        text, kb = await build_today()
+        await cb.message.answer(text, reply_markup=kb)
+    await cb.answer()
+
+
+@router.callback_query(TodayCb.filter(), StateFilter("*"))
+async def today_page(cb: CallbackQuery, callback_data: TodayCb) -> None:
+    if cb.message:
+        text, kb = await build_today(callback_data.page)
+        try:
+            await cb.message.edit_text(text, reply_markup=kb)
+        except TelegramBadRequest:
+            pass
+    await cb.answer()
 
 
 # ---------------------------------------------------------------- /find

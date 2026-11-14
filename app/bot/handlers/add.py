@@ -15,6 +15,7 @@ from app.bot.handlers.start import USER_TEXT
 from app.bot.keyboards import BTN_ADD, main_menu, skip_cancel
 from app.bot.states import AddFlow
 from app.db import repo
+from app.db.models import utcnow
 from app.db.session import SessionLocal
 from app.discovery.filters import extract_urls, is_blacklisted, normalize_domain
 
@@ -101,6 +102,7 @@ async def process_text(message: Message, bot: Bot, text: str) -> None:
                 niche_id=niche.id if niche else None,
                 source="manual",
                 status="NEW",
+                notified_at=utcnow(),  # добавлен вручную — сразу в очередь обзвона
             )
             to_audit.append(company.id)
         await session.commit()

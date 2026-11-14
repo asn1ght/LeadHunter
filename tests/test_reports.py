@@ -157,3 +157,16 @@ def test_triggers():
     assert tr["day"].get_next_fire_time(None, start) == datetime(2026, 11, 13, 21, 0, tzinfo=TZ)
     assert tr["week"].get_next_fire_time(None, start) == datetime(2026, 11, 15, 21, 1, tzinfo=TZ)
     assert tr["month"].get_next_fire_time(None, start) == datetime(2026, 11, 30, 21, 2, tzinfo=TZ)
+
+
+def test_crontab_weekday_numbers():
+    from app.scheduler import crontab_trigger
+
+    sat = datetime(2026, 11, 14, 12, tzinfo=TZ)
+    # crontab: 1 = понедельник (в APScheduler напрямую было бы вторником)
+    assert crontab_trigger("0 2 * * 1", TZ).get_next_fire_time(None, sat) == datetime(2026, 11, 16, 2, 0, tzinfo=TZ)
+    assert crontab_trigger("0 2 * * 0", TZ).get_next_fire_time(None, sat) == datetime(2026, 11, 15, 2, 0, tzinfo=TZ)
+    assert crontab_trigger("0 2 * * 7", TZ).get_next_fire_time(None, sat) == datetime(2026, 11, 15, 2, 0, tzinfo=TZ)
+    assert crontab_trigger("30 3 * * 1-5", TZ).get_next_fire_time(None, sat) == datetime(2026, 11, 16, 3, 30, tzinfo=TZ)
+    assert crontab_trigger("0 2 * * mon", TZ).get_next_fire_time(None, sat) == datetime(2026, 11, 16, 2, 0, tzinfo=TZ)
+    assert crontab_trigger("0 9 * * *", TZ).get_next_fire_time(None, sat) == datetime(2026, 11, 15, 9, 0, tzinfo=TZ)

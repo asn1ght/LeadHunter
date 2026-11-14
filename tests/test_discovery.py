@@ -167,20 +167,3 @@ class FakeBot:
 
     async def send_message(self, chat_id, text, **kw):
         self.sent.append(text)
-
-
-async def test_morning_push(env, monkeypatch):
-    monkeypatch.setattr(disc, "utcnow", lambda: NIGHT)
-    await disc.run_discovery(env, FakeSearch())
-    monkeypatch.setattr("app.bot.common.SessionLocal", env)
-    from app.config import Settings
-    monkeypatch.setattr(jobs, "get_settings", lambda: Settings(ADMIN_IDS="1"))
-    bot = FakeBot()
-    sent = await jobs.morning_push(bot, env)
-    assert sent == 1  # LEADS_DAILY_LIMIT=1
-    assert bot.sent[0].startswith("☀️ Найдено новых лидов: 2, отправляю топ-1")
-    assert "/100" in bot.sent[1]
-    # второй раз шлёт только оставшегося
-    bot2 = FakeBot()
-    assert await jobs.morning_push(bot2, env) == 1
-    assert await jobs.morning_push(FakeBot(), env) == 0

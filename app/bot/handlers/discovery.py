@@ -21,7 +21,7 @@ from app.config import get_settings
 from app.db import repo
 from app.db.models import LLMUsage, Niche, SearchOperation, SearchQuery, utcnow
 from app.db.session import SessionLocal
-from app.discovery.jobs import discovery_job, morning_push
+from app.discovery.jobs import add_found_to_plan, discovery_job
 from app.discovery.query_policy import is_paused, resume
 from app.discovery.runner import (
     estimate_cost,
@@ -315,7 +315,7 @@ async def run_go(cb: CallbackQuery, bot: Bot) -> None:
         async with _run_lock:
             stats = await discovery_job(bot, force=True)
             await bot.send_message(chat_id, "✅ Поиск завершён\n" + stats.summary())
-            sent = await morning_push(bot)
+            sent = await add_found_to_plan(bot, chat_id)
             if not sent and stats.new_companies:
                 await bot.send_message(chat_id, "Лидов выше порога нет. Все найденные — в /leads.")
 

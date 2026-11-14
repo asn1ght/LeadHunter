@@ -1,17 +1,18 @@
-"""Задачи планировщика этапа 3: ночной поиск, опрос отложенных запросов, утренняя рассылка (8.7)."""
+"""Задачи планировщика: ночной поиск, опрос отложенных запросов, план обзвона на неделю."""
 from __future__ import annotations
 
+from datetime import datetime, time, timedelta, timezone
+
 from aiogram import Bot
+from aiogram.types import InlineKeyboardButton, InlineKeyboardMarkup
 from loguru import logger
-from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.ai.client import DeepSeekClient
-from app.bot.common import send_card
 from app.config import get_settings
-from app.crm.statuses import Status
+from app.crm import workplan
 from app.db import repo
-from app.db.models import Company, utcnow
+from app.db.models import utcnow
 from app.db.session import SessionLocal
 from app.discovery.runner import RunStats, poll_operations, run_discovery
 from app.discovery.yandex_search import YandexSearchClient, YandexSearchError
@@ -70,50 +71,94 @@ async def poll_job(bot: Bot) -> None:
         await client.aclose()
 
 
-async def pending_new_leads(session: AsyncSession) -> list[Company]:
-    """Найденные поиском и ещё не присланные лиды выше порога, по убыванию оценки."""
-    threshold = await repo.get_runtime_setting(session, "SCORE_THRESHOLD")
-    return list(
-        (
-            await session.execute(
-                select(Company)
-                .where(
-                    Company.status == Status.NEW.value,
-                    Company.source == "yandex",
-                    Company.notified_at.is_(None),
-                    Company.score >= threshold,
-                )
-                .order_by(Company.score.desc(), Company.id)
-            )
-        ).scalars()
-    )
+DOW = {"mon": 0, "tue": 1, "wed": 2, "thu": 3, "fri": 4, "sat": 5, "sun": 6}
 
 
-async def morning_push(bot: Bot, session_factory: async_sessionmaker[AsyncSession] = SessionLocal) -> int:
-    """Сводка «Найдено за ночь: N, отправлю топ-K» и карточки. Возвращает число отправленных."""
+def today_button() -> InlineKeyboardMarkup:
+    from app.bot.keyboards import NavCb
+
+    return InlineKeyboardMarkup(inline_keyboard=[[
+        InlineKeyboardButton(text="📞 Открыть «Сегодня»", callback_data=NavCb(action="today").pack())
+    ]])
+
+
+async def _send(bot: Bot, text: str) -> None:
+    for admin in get_settings().admin_ids:
+        try:
+            await bot.send_message(admin, text, reply_markup=today_button())
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("notify {} failed: {}", admin, exc)
+
+
+async def weekly_plan(bot: Bot, session_factory: async_sessionmaker[AsyncSession] = SessionLocal) -> int:
+    """Понедельник: взять в план недели лучшие лиды из запаса и прислать сводку. Возвращает число взятых."""
     async with session_factory() as session:
-        leads = await pending_new_leads(session)
-        limit = int(await repo.get_runtime_setting(session, "LEADS_DAILY_LIMIT"))
-    if not leads:
-        return 0
-    top = leads[:limit]
-    rest = len(leads) - len(top)
-    head = f"☀️ Найдено новых лидов: {len(leads)}, отправляю топ-{len(top)}."
-    if rest:
-        head += f" Остальные {rest} — в /new."
-    await notify_admins(bot, head)
-    sent_ids: list[int] = []
-    for c in top:
-        for admin in get_settings().admin_ids:
-            try:
-                await send_card(bot, admin, c.id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("push card {} failed: {}", c.id, exc)
-        sent_ids.append(c.id)
-    async with session_factory() as session:
-        for cid in sent_ids:
-            c = await repo.get_company(session, cid)
-            if c:
-                c.notified_at = utcnow()
+        carried = len(await workplan.call_queue(session))
+        limit = int(await repo.get_runtime_setting(session, "LEADS_WEEKLY_LIMIT"))
+        taken = await workplan.assign(session, limit)
+        left_in_pool = len(await workplan.pool(session))
         await session.commit()
-    return len(sent_ids)
+    total = carried + len(taken)
+    if not total:
+        await _send(bot, "☀️ План на неделю: новых лидов нет, очередь пуста.\nМожно запустить поиск: /run")
+        return 0
+    today = utcnow().astimezone(get_settings().tz).date()
+    pace = workplan.daily_pace(total, today)
+    lines = ["☀️ <b>План на неделю</b>", f"🆕 Новых в плане: {len(taken)}"]
+    if left_in_pool:
+        lines.append(f"📦 В запасе ещё {left_in_pool} — в /new, придут в следующий план")
+    if carried:
+        lines.append(f"↪️ Не обработано с прошлых недель: {carried}")
+    lines.append(f"📞 Всего к обзвону: {total}" + (f" · ≈{pace} в день до пятницы" if pace else ""))
+    await _send(bot, "\n".join(lines))
+    return len(taken)
+
+
+async def daily_reminder(bot: Bot, session_factory: async_sessionmaker[AsyncSession] = SessionLocal) -> None:
+    """Вт–пт: короткое напоминание, если есть кому звонить."""
+    tz = get_settings().tz
+    today = utcnow().astimezone(tz).date()
+    if workplan.workdays_left(today) == 0:
+        return
+    end = datetime.combine(today + timedelta(days=1), time(0), tz).astimezone(timezone.utc)
+    async with session_factory() as session:
+        if not await repo.get_runtime_setting(session, "DAILY_QUEUE_REMINDER"):
+            return
+        queue = len(await workplan.call_queue(session))
+        reminders = len(await repo.open_reminders_before(session, end))
+    if not queue and not reminders:
+        return
+    pace = workplan.daily_pace(queue, today)
+    text = f"📞 К обзвону: {queue}" + (f" (≈{pace} сегодня)" if pace else "") + f" · напоминаний: {reminders}"
+    await _send(bot, text)
+
+
+async def morning_job(bot: Bot) -> None:
+    """Утро: в день плана (NEW_LEADS_PUSH_DOW) — план недели, в остальные — напоминание."""
+    async with SessionLocal() as session:
+        dow = str(await repo.get_runtime_setting(session, "NEW_LEADS_PUSH_DOW")).lower()[:3]
+    today = utcnow().astimezone(get_settings().tz).date()
+    if today.weekday() == DOW.get(dow, 0):
+        await weekly_plan(bot)
+    else:
+        await daily_reminder(bot)
+
+
+async def add_found_to_plan(bot: Bot, chat_id: int,
+                            session_factory: async_sessionmaker[AsyncSession] = SessionLocal) -> int:
+    """После ручного /run: добавить найденное в план текущей недели в пределах лимита."""
+    async with session_factory() as session:
+        limit = int(await repo.get_runtime_setting(session, "LEADS_WEEKLY_LIMIT"))
+        quota = max(0, limit - await workplan.assigned_this_week(session))
+        taken = await workplan.assign(session, quota)
+        left_in_pool = len(await workplan.pool(session))
+        queue = len(await workplan.call_queue(session))
+        await session.commit()
+    if not taken and not left_in_pool:
+        return 0
+    lines = [f"🆕 В план недели добавлено: {len(taken)} · к обзвону всего: {queue}"]
+    if left_in_pool:
+        reason = "лимит недели исчерпан" if quota <= len(taken) else "ниже порога не берём"
+        lines.append(f"📦 В запасе: {left_in_pool} ({reason}) — в /new, придут в следующий план")
+    await bot.send_message(chat_id, "\n".join(lines), reply_markup=today_button())
+    return len(taken)

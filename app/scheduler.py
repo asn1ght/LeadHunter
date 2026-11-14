@@ -1,6 +1,8 @@
 """Планировщик (APScheduler): напоминания, отчёты, ночной поиск, утренняя рассылка."""
 from __future__ import annotations
 
+import re
+
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -10,7 +12,7 @@ from app.config import get_settings
 from app.crm.reminders import check_reminders
 from app.db import repo
 from app.db.session import SessionLocal
-from app.discovery.jobs import morning_push, poll_job, scheduled_discovery
+from app.discovery.jobs import morning_job, poll_job, scheduled_discovery
 from app.reports.service import send_scheduled_report
 
 
@@ -21,6 +23,20 @@ def _hm(value: str, default: tuple[int, int] = (21, 0)) -> tuple[int, int]:
     except ValueError:
         logger.warning("bad time {!r}, using default", value)
         return default
+
+
+_CRON_DOW = {"0": "sun", "1": "mon", "2": "tue", "3": "wed", "4": "thu", "5": "fri", "6": "sat", "7": "sun"}
+
+
+def crontab_trigger(expr: str, tz) -> CronTrigger:  # type: ignore[no-untyped-def]
+    """CronTrigger из обычной crontab-строки «мин час день месяц день_недели».
+
+    В crontab понедельник = 1, воскресенье = 0/7, а в APScheduler числа дней недели начинаются
+    с понедельника = 0 — поэтому числа переводим в названия (mon…sun), иначе всё сдвигается на день.
+    """
+    minute, hour, day, month, dow = expr.split()
+    dow = re.sub(r"[0-7]", lambda m: _CRON_DOW[m.group(0)], dow) if not dow.startswith("*") else dow
+    return CronTrigger(minute=minute, hour=hour, day=day, month=month, day_of_week=dow, timezone=tz)
 
 
 def report_triggers(daily_time: str, weekly_dow: str, monthly_day: str, tz) -> dict[str, CronTrigger]:  # type: ignore[no-untyped-def]
@@ -60,16 +76,16 @@ async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
             coalesce=True, misfire_grace_time=3600,
         )
     try:
-        discovery_trigger = CronTrigger.from_crontab(discovery_cron, timezone=tz)
+        discovery_trigger = crontab_trigger(discovery_cron, tz)
     except ValueError:
         logger.warning("bad DISCOVERY_CRON {!r}, using '0 2 * * 1'", discovery_cron)
-        discovery_trigger = CronTrigger.from_crontab("0 2 * * 1", timezone=tz)
+        discovery_trigger = crontab_trigger("0 2 * * 1", tz)
     scheduler.add_job(scheduled_discovery, discovery_trigger, args=[bot], id="discovery",
                       max_instances=1, coalesce=True, misfire_grace_time=3600)
     scheduler.add_job(poll_job, "interval", minutes=10, args=[bot], id="search_poll",
                       max_instances=1, coalesce=True)
     ph, pm = _hm(push_time, (9, 30))
-    scheduler.add_job(morning_push, CronTrigger(hour=ph, minute=pm, timezone=tz), args=[bot], id="morning_push",
+    scheduler.add_job(morning_job, CronTrigger(hour=ph, minute=pm, timezone=tz), args=[bot], id="morning",
                       coalesce=True, misfire_grace_time=3600)
     logger.info("reports: daily {}, weekly {}, monthly day={}; discovery '{}'; push {}",
                 daily, weekly, monthly, discovery_cron, push_time)

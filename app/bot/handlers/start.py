@@ -76,7 +76,7 @@ async def nav_menu(cb: CallbackQuery, state: FSMContext) -> None:
 @router.message(Command("settings"), StateFilter("*"))
 async def settings_view(message: Message, state: FSMContext) -> None:
     await state.clear()
-    keys = ["SCORE_THRESHOLD", "LEADS_DAILY_LIMIT", "AUDIT_CONCURRENCY", "ACTIVE_NICHE", "TEST_STAGE_LABEL"]
+    keys = ["SCORE_THRESHOLD", "LEADS_WEEKLY_LIMIT", "AUDIT_CONCURRENCY", "ACTIVE_NICHE", "TEST_STAGE_LABEL"]
     async with SessionLocal() as session:
         values = {k: await repo.get_runtime_setting(session, k) for k in keys}
     lines = ["⚙️ <b>Настройки</b> (изменение из бота — на следующих этапах)", ""]

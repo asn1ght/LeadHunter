@@ -64,7 +64,10 @@ class Settings(BaseSettings):
 
     # Логика
     SCORE_THRESHOLD: int = 55
-    LEADS_DAILY_LIMIT: int = 15
+    LEADS_DAILY_LIMIT: int = 15  # устарело: заменено планом на неделю
+    LEADS_WEEKLY_LIMIT: int = 40  # сколько новых лидов брать в план обзвона на неделю
+    NEW_LEADS_PUSH_DOW: str = "mon"  # день плана недели (mon..sun)
+    DAILY_QUEUE_REMINDER: bool = True  # в остальные будни — утреннее напоминание об очереди
     AUDIT_CONCURRENCY: int = 5
     DISCOVERY_CRON: str = "0 2 * * 1"
     DAILY_REPORT_TIME: str = "21:00"
