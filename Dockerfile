@@ -10,9 +10,11 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
-# Шрифты с кириллицей и эмодзи — иначе в скриншотах и PDF вместо текста будут квадратики
+# Шрифты с кириллицей и эмодзи — иначе в скриншотах и PDF вместо текста будут квадратики.
+# libatomic1 нужна Node.js, который Playwright использует для установки браузера (в slim-образе её нет).
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends tzdata fonts-dejavu-core fonts-liberation fonts-noto-color-emoji \
+    && apt-get install -y --no-install-recommends tzdata libatomic1 \
+       fonts-dejavu-core fonts-liberation fonts-noto-color-emoji \
     && rm -rf /var/lib/apt/lists/*
 
 # Зависимости отдельным слоем: пересобираются, только когда меняется requirements.lock
