@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime
+from html import escape
 
 from aiogram import Bot
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -12,7 +14,9 @@ from app.config import get_settings
 from app.crm.reminders import check_reminders
 from app.db import repo
 from app.db.session import SessionLocal
+from app.backup import make_backup
 from app.discovery.jobs import morning_job, poll_job, scheduled_discovery
+from app.health import beat
 from app.reports.service import send_scheduled_report
 
 
@@ -56,6 +60,19 @@ def report_triggers(daily_time: str, weekly_dow: str, monthly_day: str, tz) -> d
     }
 
 
+async def scheduled_backup(bot: Bot) -> None:
+    """Ежедневный бэкап; о сбое — сообщение админам (тихий сбой бэкапа хуже, чем шумный)."""
+    try:
+        await make_backup()
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("scheduled backup failed: {}", exc)
+        for admin in get_settings().admin_ids:
+            try:
+                await bot.send_message(admin, f"💾⚠️ Ежедневный бэкап не удался: {escape(str(exc)[:300])}")
+            except Exception:  # noqa: BLE001
+                logger.warning("cannot notify {} about backup failure", admin)
+
+
 async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     tz = get_settings().tz
     async with SessionLocal() as session:
@@ -87,6 +104,11 @@ async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     ph, pm = _hm(push_time, (9, 30))
     scheduler.add_job(morning_job, CronTrigger(hour=ph, minute=pm, timezone=tz), args=[bot], id="morning",
                       coalesce=True, misfire_grace_time=3600)
+    scheduler.add_job(beat, "interval", minutes=1, id="heartbeat", next_run_time=datetime.now(tz),
+                      coalesce=True, max_instances=1)
+    bh, bm = _hm(get_settings().BACKUP_TIME, (3, 30))
+    scheduler.add_job(scheduled_backup, CronTrigger(hour=bh, minute=bm, timezone=tz), args=[bot], id="backup",
+                      coalesce=True, misfire_grace_time=6 * 3600)
     logger.info("reports: daily {}, weekly {}, monthly day={}; discovery '{}'; push {}",
                 daily, weekly, monthly, discovery_cron, push_time)
     return scheduler

@@ -15,6 +15,7 @@ if __package__ in (None, ""):
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.types import BotCommand
@@ -23,6 +24,7 @@ from alembic.config import Config
 from loguru import logger
 
 from app.config import BASE_DIR, DATA_DIR, get_settings, mask_secret
+from app.net import mask_proxy, validate_proxy
 
 
 def setup_logging() -> None:
@@ -42,7 +44,7 @@ def run_migrations() -> None:
 
 
 def build_dispatcher() -> Dispatcher:
-    from app.bot.handlers import add, ai_actions, card_actions, discovery, fallback, leads, pdf, reports, requisites, start
+    from app.bot.handlers import add, ai_actions, card_actions, discovery, fallback, leads, pdf, reports, requisites, start, system
     from app.bot.middlewares import AdminOnlyMiddleware
 
     dp = Dispatcher(storage=MemoryStorage())
@@ -50,7 +52,7 @@ def build_dispatcher() -> Dispatcher:
     # порядок важен: команды/меню → разделы → сценарии карточки → fallback
     dp.include_routers(
         start.router, leads.router, reports.router, discovery.router, add.router,
-        ai_actions.router, pdf.router, requisites.router, card_actions.router, fallback.router,
+        ai_actions.router, pdf.router, requisites.router, system.router, card_actions.router, fallback.router,
     )
     return dp
 
@@ -69,6 +71,8 @@ COMMANDS = [
     BotCommand(command="queries", description="Поисковые запросы"),
     BotCommand(command="niche", description="Ниши"),
     BotCommand(command="usage", description="Расход API"),
+    BotCommand(command="netcheck", description="Проверка сети и прокси"),
+    BotCommand(command="backup", description="Бэкап базы"),
     BotCommand(command="cancel", description="Отменить ввод"),
     BotCommand(command="help", description="Справка"),
 ]
@@ -84,13 +88,16 @@ async def run() -> None:
         await repo.sync_niches_from_config(session)
         await session.commit()
 
-    bot = Bot(s.BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
+    session = AiohttpSession(proxy=s.TELEGRAM_PROXY) if s.TELEGRAM_PROXY else None  # прокси только для Bot API
+    bot = Bot(s.BOT_TOKEN, session=session, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = build_dispatcher()
     scheduler = await setup_scheduler(bot)
     scheduler.start()
     scheduler.get_job("reminders").modify(next_run_time=datetime.now(s.tz))
     await bot.set_my_commands(COMMANDS)
     logger.info("bot started, admins={}, token={}", sorted(s.admin_ids), mask_secret(s.BOT_TOKEN))
+    logger.info("proxy: telegram={}, yandex={}, audit={}", mask_proxy(s.TELEGRAM_PROXY),
+                mask_proxy(s.YANDEX_PROXY), mask_proxy(s.AUDIT_PROXY))
     try:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
@@ -108,6 +115,10 @@ def main() -> None:
     if not s.BOT_TOKEN or not s.admin_ids:
         logger.error("Заполните BOT_TOKEN и ADMIN_IDS в .env (см. .env.example)")
         sys.exit(1)
+    for key in ("TELEGRAM_PROXY", "YANDEX_PROXY", "AUDIT_PROXY"):
+        if error := validate_proxy(getattr(s, key)):
+            logger.error("{}: {}", key, error)
+            sys.exit(1)
     run_migrations()
     asyncio.run(run())
 

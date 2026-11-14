@@ -1,0 +1,4 @@
+# Скрипты и юниты для Linux — всегда с LF
+*.sh text eol=lf
+deploy/* text eol=lf
+Dockerfile text eol=lf

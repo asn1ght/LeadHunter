@@ -1,0 +1,20 @@
+services:
+  bot:
+    build: .
+    image: leadhunter:latest
+    container_name: leadhunter
+    env_file: .env
+    volumes:
+      - ./data:/app/data          # БД, бэкапы, логи, скриншоты — переживают пересборку
+    restart: unless-stopped       # автоперезапуск после сбоя и перезагрузки сервера
+    init: true                    # корректно завершает процессы Chromium
+    shm_size: "512m"              # Chromium нужна разделяемая память
+    stop_grace_period: 30s
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+    # Если прокси — SSH-туннель на этом же сервере (socks5://127.0.0.1:1080, см. README),
+    # раскомментируйте: контейнер будет видеть 127.0.0.1 хоста.
+    # network_mode: host

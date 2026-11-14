@@ -15,6 +15,7 @@ from loguru import logger
 from selectolax.lexbor import LexborHTMLParser as HTMLParser
 
 from app.config import get_settings
+from app.net import open_tls
 
 MAX_HTML_BYTES = 5 * 1024 * 1024
 LINK_GROUPS = (  # по приоритету: ИНН чаще всего в «Реквизитах», «Контактах» или «О компании»
@@ -99,6 +100,7 @@ def _client(verify: bool) -> httpx.AsyncClient:
         verify=verify,
         headers={"User-Agent": s.USER_AGENT, "Accept-Language": "ru-RU,ru;q=0.9"},
         max_redirects=10,
+        proxy=s.AUDIT_PROXY or None,
     )
 
 
@@ -124,9 +126,7 @@ async def ssl_days_left(host: str, port: int = 443, timeout: float = 10) -> int 
     """Сколько дней осталось до истечения сертификата (None — не удалось узнать)."""
     try:
         ctx = ssl.create_default_context()
-        _, writer = await asyncio.wait_for(
-            asyncio.open_connection(host, port, ssl=ctx, server_hostname=host), timeout
-        )
+        _, writer = await asyncio.wait_for(open_tls(host, port, ctx, get_settings().AUDIT_PROXY), timeout)
         cert = writer.get_extra_info("peercert")
         writer.close()
         try:

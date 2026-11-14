@@ -82,13 +82,17 @@ def parse_xml(xml: str, page: int = 0, per_page: int = 10) -> list[SerpItem]:
 class YandexSearchClient:
     """Минимальный клиент v2: синхронный поиск и отложенные операции."""
 
-    def __init__(self, api_key: str, folder_id: str, region: int, per_page: int = 10, timeout: float = 60) -> None:
+    def __init__(
+        self, api_key: str, folder_id: str, region: int, per_page: int = 10, timeout: float = 60, proxy: str = ""
+    ) -> None:
         if not api_key or not folder_id:
             raise YandexSearchError("YANDEX_SEARCH_API_KEY / YANDEX_FOLDER_ID не заданы")
         self.folder_id = folder_id
         self.region = region
         self.per_page = per_page
-        self._client = httpx.AsyncClient(timeout=timeout, headers={"Authorization": f"Api-Key {api_key}"})
+        self._client = httpx.AsyncClient(
+            timeout=timeout, headers={"Authorization": f"Api-Key {api_key}"}, proxy=proxy or None  # YANDEX_PROXY
+        )
 
     async def aclose(self) -> None:
         await self._client.aclose()

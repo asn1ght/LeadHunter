@@ -23,7 +23,7 @@ from app.discovery.yandex_search import YandexSearchClient, YandexSearchError
 def make_search_client() -> YandexSearchClient:
     s = get_settings()
     return YandexSearchClient(s.YANDEX_SEARCH_API_KEY, s.YANDEX_FOLDER_ID, s.YANDEX_SEARCH_REGION,
-                              per_page=s.YANDEX_GROUPS_ON_PAGE)
+                              per_page=s.YANDEX_GROUPS_ON_PAGE, proxy=s.YANDEX_PROXY)
 
 
 async def notify_admins(bot: Bot, text: str) -> None:

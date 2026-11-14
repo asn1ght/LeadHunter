@@ -16,3 +16,5 @@
 - Смена статуса лида — только через `app.crm.service.change_status()`; отчёты считаются по `events`.
 - Схема БД меняется только миграциями Alembic (`alembic revision --autogenerate`), для SQLite — batch-режим.
 - Тексты бота — на русском, коротко, с эмодзи.
+- Деплой (этап 5): `Dockerfile` + `docker-compose.yml`, systemd-юниты в `deploy/`. Зависимости для сервера — `requirements.lock`; после правки `pyproject.toml` пересобрать (команда в README → «Зависимости»).
+- Прокси по сервисам: `TELEGRAM_PROXY`, `YANDEX_PROXY`, `AUDIT_PROXY` (`app/net.py`); пароли прокси в логах — только через `mask_proxy()`.

@@ -101,6 +101,15 @@ class Settings(BaseSettings):
     BROWSER_ENABLED: bool = True
     BROWSER_CONCURRENCY: int = 2
 
+    # Прокси по сервисам (этап 5). Пусто = напрямую. Форматы: http://host:port, socks5://user:pass@host:port
+    TELEGRAM_PROXY: str = ""  # только Telegram Bot API
+    YANDEX_PROXY: str = ""  # только Yandex Search API и operations
+    AUDIT_PROXY: str = ""  # загрузка сайтов при аудите (httpx, проверка SSL, Chromium)
+
+    # Бэкапы (этап 5)
+    BACKUP_TIME: str = "03:30"  # ежедневный бэкап БД в data/backups/
+    BACKUP_KEEP_DAYS: int = 14
+
     # HTTP
     HTTP_TIMEOUT: float = 20
     USER_AGENT: str = "Mozilla/5.0 (compatible; LeadHunterAudit/1.0)"

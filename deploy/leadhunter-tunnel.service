@@ -1,0 +1,28 @@
+# SOCKS5-прокси через SSH-туннель на второй сервер (autossh поднимает его после обрыва и перезагрузки).
+# Даёт прокси socks5://127.0.0.1:1080 — укажите его в .env как TELEGRAM_PROXY (или YANDEX_PROXY / AUDIT_PROXY).
+#
+# Перед установкой замените:
+#   tunnel@PROXY_HOST — пользователь и адрес второго сервера,
+#   /home/leadhunter/.ssh/tunnel_ed25519 — путь к SSH-ключу (без пароля).
+# Установка: см. README → «Свой прокси через SSH-туннель».
+
+[Unit]
+Description=LeadHunter SSH SOCKS tunnel
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=leadhunter
+Environment=AUTOSSH_GATETIME=0
+ExecStart=/usr/bin/autossh -M 0 -N \
+    -D 127.0.0.1:1080 \
+    -o ServerAliveInterval=30 -o ServerAliveCountMax=3 \
+    -o ExitOnForwardFailure=yes \
+    -o StrictHostKeyChecking=accept-new \
+    -i /home/leadhunter/.ssh/tunnel_ed25519 \
+    tunnel@PROXY_HOST
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

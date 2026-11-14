@@ -14,6 +14,7 @@ from typing import Any
 from loguru import logger
 
 from app.config import DATA_DIR, get_settings
+from app.net import playwright_proxy
 
 SCREENSHOT_DIR = DATA_DIR / "screenshots"
 DESKTOP = {"width": 1366, "height": 800}
@@ -55,7 +56,12 @@ class BrowserPool:
 
             if self._pw is None:
                 self._pw = await async_playwright().start()
-            self._browser = await self._pw.chromium.launch(headless=True, args=["--disable-dev-shm-usage"])
+            proxy = playwright_proxy(get_settings().AUDIT_PROXY)
+            if get_settings().AUDIT_PROXY and proxy is None:
+                logger.warning("Chromium не умеет SOCKS5 с паролем — скриншоты идут напрямую, без AUDIT_PROXY")
+            self._browser = await self._pw.chromium.launch(
+                headless=True, args=["--disable-dev-shm-usage"], **({"proxy": proxy} if proxy else {})
+            )
             return self._browser
 
     def semaphore(self) -> asyncio.Semaphore:
