@@ -1,0 +1,86 @@
+# Домены, которые не являются лидами. Поддерживаются шаблоны * и ?.
+aggregators:
+  - avito.ru
+  - profi.ru
+  - 2gis.ru
+  - 2gis.com
+  - zoon.ru
+  - flamp.ru
+  - spr.ru
+  - orgpage.ru
+  - rusprofile.ru
+  - checko.ru
+  - list-org.com
+  - otzovik.com
+  - irecommend.ru
+  - yell.ru
+  - tiu.ru
+  - pulscen.ru
+  - satom.ru
+  - blizko.ru
+  - youdo.com
+  - uslugi.yandex.ru
+  - remontnik.ru
+  - stroyportal.ru
+  - kartaslov.ru
+  - spravker.ru
+  - firmika.ru
+  - cataloxy.ru
+  - sbis.ru
+  - zachestnyibiznes.ru
+search_and_social:
+  - yandex.ru
+  - ya.ru
+  - google.com
+  - google.ru
+  - vk.com
+  - vk.ru
+  - ok.ru
+  - youtube.com
+  - dzen.ru
+  - rutube.ru
+  - t.me
+  - telegram.org
+  - wikipedia.org
+  - mail.ru
+jobs:
+  - hh.ru
+  - superjob.ru
+  - rabota.ru
+  - zarplata.ru
+marketplaces:
+  - ozon.ru
+  - wildberries.ru
+  - market.yandex.ru
+  - aliexpress.ru
+  - leroymerlin.ru
+  - petrovich.ru
+  - vseinstrumenti.ru
+gov:
+  - "*.gov.ru"
+  - gov.ru
+  - "*.gov.spb.ru"
+  - gov.spb.ru
+  - gosuslugi.ru
+  - lenobl.ru
+  - "*.lenobl.ru"
+  - nalog.gov.ru
+media_forums:
+  - fontanka.ru
+  - spb.kp.ru
+  - kp.ru
+  - rbc.ru
+  - forumhouse.ru
+  - pikabu.ru
+  - dp.ru
+  - 78.ru
+  - "*.livejournal.com"
+gas_giants:
+  - "gazprom*"
+  - "*gazprom*"
+  - peterburggaz.ru
+  - lenoblgaz.ru
+  - gazprom-gr.ru
+  - gazpromrg.ru
+  - pgaz.ru
+  - gazovik.ru

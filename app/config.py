@@ -1,0 +1,122 @@
+"""Конфигурация приложения из `.env` (pydantic-settings).
+
+Значения логики (порог, лимиты, веса) могут перекрываться таблицей `settings`
+в БД — см. `app.db.repo.get_runtime_setting`.
+"""
+from __future__ import annotations
+
+from functools import lru_cache
+from pathlib import Path
+from zoneinfo import ZoneInfo
+
+from pydantic import field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+BASE_DIR = Path(__file__).resolve().parent.parent
+CONFIG_DIR = BASE_DIR / "config"
+DATA_DIR = BASE_DIR / "data"
+
+
+class Settings(BaseSettings):
+    """Все параметры из `.env`. Имена совпадают с ключами `.env`."""
+
+    model_config = SettingsConfigDict(
+        env_file=BASE_DIR / ".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        case_sensitive=True,
+    )
+
+    # Telegram
+    BOT_TOKEN: str = ""
+    ADMIN_IDS: str = ""
+    TZ: str = "Europe/Moscow"
+
+    # База
+    DATABASE_URL: str = f"sqlite+aiosqlite:///{(DATA_DIR / 'leadhunter.db').as_posix()}"
+
+    # Yandex Search API (этап 3)
+    YANDEX_SEARCH_API_KEY: str = ""
+    YANDEX_FOLDER_ID: str = ""
+    YANDEX_SEARCH_REGION: int = 2
+    YANDEX_SEARCH_MODE: str = "night_v1"
+    YANDEX_PAGES_PER_QUERY: int = 3
+    YANDEX_GROUPS_ON_PAGE: int = 10
+    SEARCH_MONTHLY_LIMIT: int = 1000  # потолок запросов в месяц без ALLOW_PAID_SEARCH
+    ALLOW_PAID_SEARCH: bool = False
+
+    # DeepSeek (этап 3)
+    DEEPSEEK_API_KEY: str = ""
+    DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
+    DEEPSEEK_MODEL: str = "deepseek-flash"
+    DEEPSEEK_THINKING: bool = False
+    LLM_MONTHLY_BUDGET_RUB: float = 1000
+    LLM_ENABLED: bool = True
+    # Цена в рублях за 1M токенов (DeepSeek flash, пиковый тариф $0.30 / $1.20 при ~100 ₽/$)
+    LLM_PRICE_INPUT_PER_1M: float = 30
+    LLM_PRICE_OUTPUT_PER_1M: float = 120
+    LLM_QUALITY_MIN_TECH: int = 20  # автоматический ИИ-анализ только при score_tech ≥
+
+    # Логика
+    SCORE_THRESHOLD: int = 55
+    LEADS_DAILY_LIMIT: int = 15
+    AUDIT_CONCURRENCY: int = 5
+    DISCOVERY_CRON: str = "0 2 * * 1"
+    DAILY_REPORT_TIME: str = "21:00"
+    WEEKLY_REPORT_DOW: str = "sun"
+    MONTHLY_REPORT_DAY: str = "last"
+    NEW_LEADS_PUSH_TIME: str = "09:30"
+    TEST_STAGE_LABEL: str = "тест"
+    ACTIVE_NICHE: str = "gas"
+
+    # Веса оценки (раздел 7.5)
+    SCORE_W_SEV3: int = 15
+    SCORE_W_SEV2: int = 8
+    SCORE_W_SEV1: int = 3
+    SCORE_BONUS_INN: int = 5
+    SCORE_BONUS_SEGMENT: int = 5
+    SCORE_BONUS_HOT: int = 10
+
+    # Подпись
+    OWNER_NAME: str = ""
+    OWNER_PHONE: str = ""
+    OWNER_TELEGRAM: str = ""
+    OWNER_EMAIL: str = ""
+
+    # HTTP
+    HTTP_TIMEOUT: float = 20
+    USER_AGENT: str = "Mozilla/5.0 (compatible; LeadHunterAudit/1.0)"
+
+    @field_validator("DATABASE_URL")
+    @classmethod
+    def _abs_sqlite_path(cls, v: str) -> str:
+        """Относительный путь sqlite считаем от корня проекта, а не от cwd."""
+        prefix = "sqlite+aiosqlite:///"
+        if v.startswith(prefix):
+            path = v[len(prefix):]
+            if path and path != ":memory:" and not Path(path).is_absolute():
+                return prefix + (BASE_DIR / path).as_posix()
+        return v
+
+    @property
+    def admin_ids(self) -> set[int]:
+        """Множество Telegram ID владельцев."""
+        return {int(x) for x in self.ADMIN_IDS.replace(" ", "").split(",") if x}
+
+    @property
+    def tz(self) -> ZoneInfo:
+        """Часовой пояс владельца."""
+        return ZoneInfo(self.TZ)
+
+
+@lru_cache
+def get_settings() -> Settings:
+    """Синглтон настроек."""
+    return Settings()
+
+
+def mask_secret(value: str) -> str:
+    """Маскировать секрет для логов: оставить 4 последних символа."""
+    if not value:
+        return "<empty>"
+    return "***" + value[-4:] if len(value) > 8 else "***"
