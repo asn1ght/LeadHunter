@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -19,6 +20,14 @@ from app.crm.statuses import Status
 from app.db import repo
 from app.db.models import ApiUsage, Niche, SearchOperation, SearchQuery, utcnow
 from app.discovery.filters import is_blacklisted, normalize_domain
+from app.discovery.query_policy import (
+    Policy,
+    apply_autopause,
+    is_paused,
+    pages_for,
+    record_run,
+    stop_paging,
+)
 from app.discovery.yandex_search import SerpItem, YandexSearchClient, YandexSearchError
 
 Notify = Callable[[str], Awaitable[None]]
@@ -40,6 +49,9 @@ class RunStats:
     audited: int = 0
     llm_analyzed: int = 0
     ops_created: int = 0
+    pages_saved: int = 0
+    skipped_paused: int = 0
+    paused: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     stopped_reason: str | None = None
 
@@ -55,6 +67,11 @@ class RunStats:
         if self.cancelled:
             reasons = {"region": "не СПб/ЛО", "off_niche": "не по нише", "good_site": "хороший сайт"}
             lines.append("❌ Отменено: " + ", ".join(f"{reasons.get(k, k)} — {v}" for k, v in self.cancelled.items()))
+        if self.pages_saved or self.skipped_paused:
+            lines.append(f"💸 Сэкономлено запросов: {self.pages_saved} (страницы без новых), "
+                         f"фраз на паузе пропущено: {self.skipped_paused}")
+        if self.paused:
+            lines.append(f"⏸ Поставлены на паузу ({len(self.paused)}): " + "; ".join(self.paused[:10]))
         if self.stopped_reason:
             lines.append(f"⛔ Остановлено: {self.stopped_reason}")
         if self.errors:
@@ -103,6 +120,23 @@ async def planned_requests(session: AsyncSession, niche_id: int) -> int:
         )
     ).scalar_one()
     return int(n) * int(pages)
+
+
+async def load_policy(session: AsyncSession) -> Policy:
+    g = lambda k: repo.get_runtime_setting(session, k)  # noqa: E731
+    return Policy(
+        full_depth_every=int(await g("QUERY_FULL_DEPTH_EVERY")),
+        zero_runs_to_pause=int(await g("QUERY_ZERO_RUNS_TO_PAUSE")),
+        pause_days=int(await g("QUERY_PAUSE_DAYS")),
+        min_active=int(await g("QUERY_MIN_ACTIVE")),
+    )
+
+
+async def autopause_niche(session: AsyncSession, niche_id: int, policy: Policy, stats: RunStats) -> None:
+    """Применить автопаузу к фразам ниши; названия поставленных на паузу — в stats.paused."""
+    qs = list((await session.execute(select(SearchQuery).where(SearchQuery.niche_id == niche_id))).scalars())
+    for q in apply_autopause(qs, utcnow(), policy):
+        stats.paused.append(q.text)
 
 
 # ---------------------------------------------------------------- приём выдачи
@@ -237,6 +271,7 @@ async def run_discovery(
             ).scalars()
         )
         used = await month_requests(session)
+        policy = await load_policy(session)
 
     if mode == "deferred_v2" and not is_deferred_window(now_local):
         stats.stopped_reason = "отложенные запросы принимаются только 00:00–06:00 МСК"
@@ -245,12 +280,21 @@ async def run_discovery(
         stats.stopped_reason = "вне ночного окна 00:00–07:59 МСК (запустите /run с подтверждением)"
         return stats
 
+    now = utcnow()
+    run_tag = f"{now:%Y%m%d%H%M%S}-{uuid.uuid4().hex[:8]}"  # один прогон = один тег
     seen: set[str] = set()
     new_ids: list[int] = []
     for q in queries:
+        if is_paused(q, now):
+            stats.skipped_paused += 1
+            continue
         stats.queries += 1
-        q_found = 0
-        for page in range(pages):
+        q_found = q_new = 0
+        q_pages = pages_for(q, pages, policy) if mode == "deferred_v2" else pages
+        if q_pages < pages:
+            stats.pages_saved += pages - q_pages
+        completed = False
+        for page in range(q_pages):
             if used >= limit and not allow_paid:
                 stats.stopped_reason = f"достигнут месячный лимит {limit} запросов (ALLOW_PAID_SEARCH=false)"
                 break
@@ -259,7 +303,7 @@ async def run_discovery(
                     op_id = await search_client.start_async(q.text, page)
                     async with session_factory() as session:
                         session.add(SearchOperation(op_id=op_id, query_id=q.id, niche_id=niche.id,
-                                                    query_text=q.text, page=page))
+                                                    query_text=q.text, page=page, run_tag=run_tag))
                         await record_request(session, "yandex_v2_async", paid=used >= limit)
                         await session.commit()
                     stats.ops_created += 1
@@ -269,9 +313,11 @@ async def run_discovery(
                         await record_request(session, "yandex_v2_sync", paid=used >= limit)
                         niche_obj = await session.get(Niche, niche.id)
                         assert niche_obj is not None
-                        new_ids += await ingest(session, niche_obj, q.text, items, stats, seen)
+                        page_new = await ingest(session, niche_obj, q.text, items, stats, seen)
                         await session.commit()
+                    new_ids += page_new
                     q_found += len(items)
+                    q_new += len(page_new)
                 used += 1
                 stats.requests += 1
             except YandexSearchError as exc:
@@ -281,18 +327,30 @@ async def run_discovery(
                     stats.stopped_reason = "нет доступа к Search API (проверьте ключ и роль search-api.webSearch.user)"
                     break
                 continue
-            if mode != "deferred_v2" and len(items) < search_client.per_page:
-                break  # выдача кончилась
+            if mode != "deferred_v2":
+                if len(items) < search_client.per_page:
+                    completed = True
+                    break  # выдача кончилась
+                if page + 1 < q_pages and stop_paging(q, len(page_new), policy):
+                    stats.pages_saved += q_pages - page - 1
+                    completed = True
+                    break  # страница без новых доменов — дальше не листаем
             await asyncio.sleep(1.1)  # квота 1 запрос/с
-        async with session_factory() as session:
-            qq = await session.get(SearchQuery, q.id)
-            if qq:
-                qq.last_run_at = utcnow()
-                if mode != "deferred_v2":
-                    qq.results_count = q_found
-                await session.commit()
+        else:
+            completed = True
+        if mode != "deferred_v2" and completed and not stats.stopped_reason:
+            async with session_factory() as session:
+                qq = await session.get(SearchQuery, q.id)
+                if qq:
+                    record_run(qq, q_found, q_new, utcnow())
+                    await session.commit()
         if stats.stopped_reason:
             break
+
+    if mode != "deferred_v2" and stats.requests:
+        async with session_factory() as session:
+            await autopause_niche(session, niche.id, policy, stats)
+            await session.commit()
 
     await process_companies(session_factory, new_ids, stats, ai, notify)
     logger.info("discovery done: {}", stats.summary().replace("\n", " | "))
@@ -315,6 +373,7 @@ async def poll_operations(
         return stats
     seen: set[str] = set()
     new_ids: list[int] = []
+    touched: set[tuple[str | None, int | None, int | None]] = set()
     for op in ops:
         try:
             items = await search_client.get_operation(op.op_id, op.page)
@@ -337,12 +396,38 @@ async def poll_operations(
                     await session.commit()
                 continue
             niche = await session.get(Niche, o.niche_id) if o.niche_id else await repo.get_active_niche(session)
+            op_new: list[int] = []
             if niche:
-                new_ids += await ingest(session, niche, o.query_text, items, stats, seen)
+                op_new = await ingest(session, niche, o.query_text, items, stats, seen)
+            new_ids += op_new
             o.status, o.done_at = "done", utcnow()
-            if o.query_id and (q := await session.get(SearchQuery, o.query_id)):
-                q.results_count = (q.results_count or 0) + len(items) if o.page else len(items)
+            o.found_count, o.new_count = len(items), len(op_new)
             await session.commit()
+        touched.add((op.run_tag, op.query_id, op.niche_id))
         await asyncio.sleep(0.15)  # квота 10 запросов/с на получение результатов
+
+    # прогон фразы завершён, когда по её тегу не осталось ожидающих операций
+    niches_to_check: set[int] = set()
+    async with session_factory() as session:
+        policy = await load_policy(session)
+        for run_tag, query_id, niche_id in touched:
+            if not query_id or not run_tag:
+                continue
+            group = list((await session.execute(select(SearchOperation).where(
+                SearchOperation.run_tag == run_tag, SearchOperation.query_id == query_id))).scalars())
+            if any(g.status == "pending" for g in group):
+                continue
+            q = await session.get(SearchQuery, query_id)
+            if q:
+                record_run(q, sum(g.found_count for g in group), sum(g.new_count for g in group), utcnow())
+                if niche_id:
+                    niches_to_check.add(niche_id)
+        for niche_id in niches_to_check:
+            await autopause_niche(session, niche_id, policy, stats)
+        await session.commit()
+    if stats.paused and notify:
+        await notify("⏸ Фразы без новых сайтов поставлены на паузу: " + "; ".join(stats.paused[:10])
+                     + "\nВключить обратно — в /queries.")
+
     await process_companies(session_factory, new_ids, stats, ai, notify)
     return stats

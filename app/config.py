@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     YANDEX_GROUPS_ON_PAGE: int = 10
     SEARCH_MONTHLY_LIMIT: int = 1000  # потолок запросов в месяц без ALLOW_PAID_SEARCH
     ALLOW_PAID_SEARCH: bool = False
+    # Экономия запросов (мягкие правила, app.discovery.query_policy)
+    QUERY_FULL_DEPTH_EVERY: int = 4  # раз в N прогонов фразы (1-й, 5-й, 9-й…) — все страницы, даже без новых
+    QUERY_ZERO_RUNS_TO_PAUSE: int = 2  # столько прогонов подряд без новых доменов → автопауза
+    QUERY_PAUSE_DAYS: int = 28  # пауза временная, потом фраза сама возвращается
+    QUERY_MIN_ACTIVE: int = 3  # автопауза не опускает число работающих фраз ниже этого
 
     # DeepSeek (этап 3)
     DEEPSEEK_API_KEY: str = ""

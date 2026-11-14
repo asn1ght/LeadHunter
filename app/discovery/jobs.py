@@ -49,8 +49,9 @@ async def discovery_job(bot: Bot, force: bool = False, niche_slug: str | None = 
 
 async def scheduled_discovery(bot: Bot) -> None:
     stats = await discovery_job(bot)
-    if stats.errors or stats.stopped_reason:
-        await notify_admins(bot, "🌙 Ночной поиск\n" + stats.summary())
+    if stats.errors or stats.stopped_reason or stats.paused:
+        tail = "\nВключить фразы обратно — в /queries." if stats.paused else ""
+        await notify_admins(bot, "🌙 Ночной поиск\n" + stats.summary() + tail)
 
 
 async def poll_job(bot: Bot) -> None:

@@ -201,16 +201,16 @@ async def test_flow(env):
         s.add(SearchQuery(niche_id=niche.id, text="газификация спб"))
         await s.commit()
     await feed(msg_update("/queries"))
-    assert "Запросы ниши «Газификация»" in tg.texts()[-1] and "активных 1 из 1" in tg.texts()[-1]
+    assert "Запросы ниши «Газификация»" in tg.texts()[-1] and "✅ работают 1 · ⏸ на паузе 0 · ⛔ выключено 0" in tg.texts()[-1]
     await feed(cb_update("q:add:0:0"))
     await feed(msg_update("газгольдер спб" + chr(10) + "монтаж газопровода спб" + chr(10) + "газгольдер спб"))
     assert "Добавлено запросов: 2" in tg.texts()[-2]
     async with factory() as s:
         qs = await repo.niche_queries(s, niche.id)
     await feed(cb_update(f"q:toggle:{qs[0].id}:0"))
-    assert "активных 2 из 3" in tg.texts()[-1]
+    assert "✅ работают 2 · ⏸ на паузе 0 · ⛔ выключено 1" in tg.texts()[-1]
     await feed(cb_update(f"q:del:{qs[1].id}:0"))
-    assert "активных 1 из 2" in tg.texts()[-1]
+    assert "✅ работают 1 · ⏸ на паузе 0 · ⛔ выключено 1" in tg.texts()[-1]
     await feed(msg_update("/niche"))
     await feed(cb_update("ni:new:0"))
     await feed(msg_update("Металлообработка"))

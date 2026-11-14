@@ -22,6 +22,7 @@ from app.db import repo
 from app.db.models import LLMUsage, Niche, SearchOperation, SearchQuery, utcnow
 from app.db.session import SessionLocal
 from app.discovery.jobs import discovery_job, morning_push
+from app.discovery.query_policy import is_paused, resume
 from app.discovery.runner import (
     estimate_cost,
     is_deferred_window,
@@ -40,22 +41,44 @@ DEFAULT_REGION_MARKERS = ["санкт-петербург", "спб", "петер
 # ---------------------------------------------------------------- /queries
 
 
+def query_line(i: int, q: SearchQuery, now, tz) -> str:  # type: ignore[no-untyped-def]
+    """Строка фразы со статистикой: найдено / новых в последнем прогоне и новых за всё время."""
+    if not q.is_active:
+        mark = "⛔"
+    elif is_paused(q, now):
+        mark = "⏸"
+    else:
+        mark = "✅"
+    line = f"{i}. {mark} {escape(q.text)}"
+    if q.runs_count:
+        line += f" — {q.results_count} / {q.last_new if q.last_new is not None else '—'} · всего новых {q.total_new}"
+    else:
+        line += " — ещё не запускалась"
+    if q.is_active and is_paused(q, now):
+        line += f" · пауза до {q.paused_until.astimezone(tz):%d.%m}"
+    return line
+
+
 async def queries_view(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
     async with SessionLocal() as session:
         niche = await repo.get_active_niche(session)
         if not niche:
             return "Нет активной ниши. Создайте её в /niche.", InlineKeyboardMarkup(inline_keyboard=[])
         qs = await repo.niche_queries(session, niche.id)
-    active = sum(q.is_active for q in qs)
+    now, tz = utcnow(), get_settings().tz
+    working = sum(1 for q in qs if q.is_active and not is_paused(q, now))
+    paused = sum(1 for q in qs if q.is_active and is_paused(q, now))
+    off = sum(1 for q in qs if not q.is_active)
     pages = max(1, (len(qs) + PER_PAGE - 1) // PER_PAGE)
     page = min(page, pages - 1)
     chunk = qs[page * PER_PAGE:(page + 1) * PER_PAGE]
     kb = InlineKeyboardBuilder()
-    for q in chunk:
-        mark = "✅" if q.is_active else "⛔"
-        res = f" · {q.results_count}" if q.last_run_at else ""
+    lines = []
+    for i, q in enumerate(chunk, start=page * PER_PAGE + 1):
+        lines.append(query_line(i, q, now, tz))
+        mark = "⛔" if not q.is_active else "⏸" if is_paused(q, now) else "✅"
         kb.row(
-            InlineKeyboardButton(text=f"{mark} {q.text[:40]}{res}", callback_data=QCb(action="toggle", qid=q.id, page=page).pack()),
+            InlineKeyboardButton(text=f"{i}. {mark} {q.text[:36]}", callback_data=QCb(action="toggle", qid=q.id, page=page).pack()),
             InlineKeyboardButton(text="🗑", callback_data=QCb(action="del", qid=q.id, page=page).pack()),
         )
     nav = []
@@ -69,12 +92,17 @@ async def queries_view(page: int = 0) -> tuple[str, InlineKeyboardMarkup]:
         InlineKeyboardButton(text="➕ Добавить", callback_data=QCb(action="add").pack()),
         InlineKeyboardButton(text="🏠 Меню", callback_data=NavCb(action="menu").pack()),
     )
-    text = (
-        f"🔎 <b>Запросы ниши «{escape(niche.name)}»</b>: активных {active} из {len(qs)}\n"
-        "Нажмите на запрос, чтобы включить/выключить. Цифра — результатов в последнем прогоне."
-    )
+    text = "\n".join([
+        f"🔎 <b>Запросы ниши «{escape(niche.name)}»</b>",
+        f"✅ работают {working} · ⏸ на паузе {paused} · ⛔ выключено {off}",
+        "<i>Цифры: найдено / новых в последнем прогоне · новых за всё время</i>",
+        "",
+        *lines,
+        "",
+        "Нажмите на фразу: ✅ → ⛔ выключить, ⛔ → ✅ включить, ⏸ → ✅ снять паузу.",
+        "⏸ — автопауза: фраза несколько прогонов подряд не давала новых сайтов, сама вернётся в указанную дату.",
+    ])
     return text, kb.as_markup()
-
 
 @router.message(Command("queries"), StateFilter("*"))
 async def cmd_queries(message: Message, state: FSMContext) -> None:
@@ -90,7 +118,12 @@ async def queries_cb(cb: CallbackQuery, callback_data: QCb) -> None:
             q = await session.get(SearchQuery, callback_data.qid)
             if q:
                 if callback_data.action == "toggle":
-                    q.is_active = not q.is_active
+                    if q.is_active and is_paused(q, utcnow()):
+                        resume(q)  # пауза → снова работает
+                    else:
+                        q.is_active = not q.is_active
+                        if q.is_active:
+                            resume(q)
                 else:
                     await session.delete(q)
                 await session.commit()

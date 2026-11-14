@@ -71,7 +71,13 @@ class SearchQuery(Base):
     text: Mapped[str] = mapped_column(String(255))
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     last_run_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
-    results_count: Mapped[int] = mapped_column(Integer, default=0)
+    results_count: Mapped[int] = mapped_column(Integer, default=0)  # доменов в выдаче за последний прогон
+    # статистика «новизны» (app.discovery.query_policy)
+    runs_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    last_new: Mapped[int | None] = mapped_column(Integer, nullable=True)  # новых компаний за последний прогон
+    total_new: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    zero_streak: Mapped[int] = mapped_column(Integer, default=0, server_default="0")  # прогонов подряд без новых
+    paused_until: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)  # автопауза
 
 
 class Company(Base):
@@ -226,6 +232,9 @@ class SearchOperation(Base):
     niche_id: Mapped[int | None] = mapped_column(ForeignKey("niches.id", ondelete="SET NULL"), nullable=True)
     query_text: Mapped[str] = mapped_column(String(255))
     page: Mapped[int] = mapped_column(Integer, default=0)
+    run_tag: Mapped[str | None] = mapped_column(String(32), nullable=True, index=True)  # один прогон = один тег
+    found_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
+    new_count: Mapped[int] = mapped_column(Integer, default=0, server_default="0")
     status: Mapped[str] = mapped_column(String(16), default="pending", index=True)  # pending|done|failed
     created_at: Mapped[datetime] = mapped_column(UTCDateTime, default=utcnow)
     done_at: Mapped[datetime | None] = mapped_column(UTCDateTime, nullable=True)
