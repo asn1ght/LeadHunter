@@ -99,7 +99,7 @@ class Settings(BaseSettings):
 
     # Playwright (этап 4)
     BROWSER_ENABLED: bool = True
-    BROWSER_CONCURRENCY: int = 2
+    BROWSER_CONCURRENCY: int = 1  # одновременных сайтов в Chromium; 1 — для VPS с 1–2 ГБ памяти
 
     # Прокси по сервисам (этап 5). Пусто = напрямую. Форматы: http://host:port, socks5://user:pass@host:port
     TELEGRAM_PROXY: str = ""  # только Telegram Bot API

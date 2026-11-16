@@ -74,19 +74,22 @@ async def audit_company(session_factory: async_sessionmaker[AsyncSession], compa
         use_browser = bool(await repo.get_runtime_setting(session, "BROWSER_ENABLED"))
 
     try:
+        # Весь аудит сайта (загрузка, разбор, скриншоты) — под одним семафором: одновременно в памяти
+        # не больше AUDIT_CONCURRENCY сайтов. Раньше семафор был только на загрузку, и при большом
+        # прогоне все загруженные страницы копились в памяти в очереди на Chromium (вплоть до OOM).
         async with _sem(concurrency):
             fetch = await fetch_site(url)
-        ex = extract(
-            [(fetch.final_url or url, fetch.html), *fetch.extra_pages] if fetch.html else [],
-            region_markers=cfg.get("region_markers", []),
-            niche_keywords=cfg.get("keywords", []),
-        )
-        browser = None
-        if fetch.ok and use_browser:
-            browser = await capture(fetch.final_url or url, company_id)
-            if browser.error:
-                logger.info("browser layer for {}: {}", url, browser.error)
-        tech = run_checks(fetch, now=datetime.now(), browser=browser)
+            ex = extract(
+                [(fetch.final_url or url, fetch.html), *fetch.extra_pages] if fetch.html else [],
+                region_markers=cfg.get("region_markers", []),
+                niche_keywords=cfg.get("keywords", []),
+            )
+            browser = None
+            if fetch.ok and use_browser:
+                browser = await capture(fetch.final_url or url, company_id)
+                if browser.error:
+                    logger.info("browser layer for {}: {}", url, browser.error)
+            tech = run_checks(fetch, now=datetime.now(), browser=browser)
     except Exception as exc:  # noqa: BLE001
         logger.exception("audit failed for {}: {}", url, exc)
         async with session_factory() as session:

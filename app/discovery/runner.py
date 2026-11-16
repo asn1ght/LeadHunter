@@ -18,7 +18,7 @@ from app.config import get_settings
 from app.crm import service
 from app.crm.statuses import Status
 from app.db import repo
-from app.db.models import ApiUsage, Niche, SearchOperation, SearchQuery, utcnow
+from app.db.models import ApiUsage, Company, Niche, SearchOperation, SearchQuery, utcnow
 from app.discovery.filters import is_blacklisted, normalize_domain
 from app.discovery.query_policy import (
     Policy,
@@ -169,6 +169,17 @@ async def ingest(
         stats.new_companies += 1
     await session.flush()
     return new_ids
+
+
+async def unaudited_ids(session: AsyncSession) -> list[int]:
+    """Новые лиды, которые так и не проверили: прогон сохранил выдачу, но процесс умер до аудита
+    (перезагрузка, нехватка памяти). Неудачный аудит тоже ставит last_audit_at — такие не повторяем."""
+    rows = await session.execute(
+        select(Company.id)
+        .where(Company.status == Status.NEW.value, Company.last_audit_at.is_(None))
+        .order_by(Company.id)
+    )
+    return list(rows.scalars())
 
 
 async def process_companies(

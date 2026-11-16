@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import re
-from datetime import datetime
+from datetime import datetime, timedelta
 from html import escape
 
 from aiogram import Bot
@@ -15,7 +15,7 @@ from app.crm.reminders import check_reminders
 from app.db import repo
 from app.db.session import SessionLocal
 from app.backup import make_backup
-from app.discovery.jobs import morning_job, poll_job, scheduled_discovery
+from app.discovery.jobs import morning_job, poll_job, resume_unprocessed, scheduled_discovery
 from app.health import beat
 from app.reports.service import send_scheduled_report
 
@@ -58,6 +58,13 @@ def report_triggers(daily_time: str, weekly_dow: str, monthly_day: str, tz) -> d
         "week": CronTrigger(day_of_week=weekly_dow, hour=wh, minute=wm, timezone=tz),
         "month": CronTrigger(day=monthly_day, hour=mh, minute=mm, timezone=tz),
     }
+
+
+async def resume_job(bot: Bot) -> None:
+    try:
+        await resume_unprocessed(bot)
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("resume job failed: {}", exc)
 
 
 async def scheduled_backup(bot: Bot) -> None:
@@ -104,6 +111,9 @@ async def setup_scheduler(bot: Bot) -> AsyncIOScheduler:
     ph, pm = _hm(push_time, (9, 30))
     scheduler.add_job(morning_job, CronTrigger(hour=ph, minute=pm, timezone=tz), args=[bot], id="morning",
                       coalesce=True, misfire_grace_time=3600)
+    # доделать прерванный прогон (сайты сохранены, но не проверены): через минуту после старта и каждые 30 мин
+    scheduler.add_job(resume_job, "interval", minutes=30, args=[bot], id="resume",
+                      next_run_time=datetime.now(tz) + timedelta(minutes=1), max_instances=1, coalesce=True)
     scheduler.add_job(beat, "interval", minutes=1, id="heartbeat", next_run_time=datetime.now(tz),
                       coalesce=True, max_instances=1)
     bh, bm = _hm(get_settings().BACKUP_TIME, (3, 30))

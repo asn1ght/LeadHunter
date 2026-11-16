@@ -16,7 +16,7 @@ from app.crm import workplan
 from app.db import repo
 from app.db.models import utcnow
 from app.db.session import SessionLocal
-from app.discovery.runner import RunStats, poll_operations, run_discovery
+from app.discovery.runner import RunStats, poll_operations, process_companies, run_discovery, unaudited_ids
 from app.discovery.yandex_search import YandexSearchClient, YandexSearchError
 
 
@@ -163,9 +163,40 @@ async def morning_job(bot: Bot) -> None:
         await daily_reminder(bot)
 
 
-async def add_found_to_plan(bot: Bot, chat_id: int,
-                            session_factory: async_sessionmaker[AsyncSession] = SessionLocal) -> int:
-    """После ручного /run: добавить найденное в план текущей недели в пределах лимита."""
+async def resume_unprocessed(bot: Bot, session_factory: async_sessionmaker[AsyncSession] = SessionLocal) -> int:
+    """Доделать прерванный прогон: проверить сохранённые, но не проверенные сайты и взять их в план недели.
+
+    Запускается при старте бота и каждые 30 минут. Выдача Яндекса к этому моменту уже оплачена и лежит
+    в базе — повторных запросов к Яндексу нет. Возвращает число проверенных сайтов.
+    """
+    if discovery_lock.locked():
+        return 0  # идёт прогон — его сайты он проверит сам
+    async with discovery_lock:
+        async with session_factory() as session:
+            ids = await unaudited_ids(session)
+        if not ids:
+            return 0
+        logger.info("resume: {} unaudited companies", len(ids))
+        await notify_admins(bot, f"♻️ Нашёл {len(ids)} сайтов без проверки — прошлый прогон прервался. "
+                                 "Проверяю, это займёт время, итог пришлю.")
+        stats = RunStats()
+        await process_companies(session_factory, ids, stats, DeepSeekClient(session_factory),
+                                notify=lambda t: notify_admins(bot, t))
+    lines = ["♻️ <b>Доделал прерванный поиск</b>", f"🩺 Проверено сайтов: {stats.audited}, ИИ-анализ: {stats.llm_analyzed}"]
+    if stats.cancelled:
+        reasons = {"region": "не СПб/ЛО", "off_niche": "не по нише", "good_site": "хороший сайт"}
+        lines.append("❌ Отменено: " + ", ".join(f"{reasons.get(k, k)} — {v}" for k, v in stats.cancelled.items()))
+    if stats.errors:
+        lines.append(f"⚠️ Ошибок: {len(stats.errors)}")
+    taken, plan_text = await _plan_found(session_factory)
+    if plan_text:
+        lines += ["", plan_text]
+    await _send(bot, "\n".join(lines))
+    return stats.audited
+
+
+async def _plan_found(session_factory: async_sessionmaker[AsyncSession]) -> tuple[int, str | None]:
+    """Взять найденное в план текущей недели в пределах лимита. (сколько взято, текст сводки или None)."""
     async with session_factory() as session:
         limit = int(await repo.get_runtime_setting(session, "LEADS_WEEKLY_LIMIT"))
         quota = max(0, limit - await workplan.assigned_this_week(session))
@@ -174,10 +205,19 @@ async def add_found_to_plan(bot: Bot, chat_id: int,
         queue = len(await workplan.call_queue(session))
         await session.commit()
     if not taken and not left_in_pool:
-        return 0
+        return 0, None
     lines = [f"🆕 В план недели добавлено: {len(taken)} · к обзвону всего: {queue}"]
     if left_in_pool:
         reason = "лимит недели исчерпан" if quota <= len(taken) else "ниже порога не берём"
         lines.append(f"📦 В запасе: {left_in_pool} ({reason}) — в /new, придут в следующий план")
-    await bot.send_message(chat_id, "\n".join(lines), reply_markup=today_button())
-    return len(taken)
+    return len(taken), "\n".join(lines)
+
+
+async def add_found_to_plan(bot: Bot, chat_id: int,
+                            session_factory: async_sessionmaker[AsyncSession] = SessionLocal) -> int:
+    """После ручного /run: добавить найденное в план текущей недели в пределах лимита."""
+    taken, text = await _plan_found(session_factory)
+    if text:
+        await bot.send_message(chat_id, text, reply_markup=today_button())
+    return taken
+
